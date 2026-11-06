@@ -1,4 +1,4 @@
-# github_dev — Agent Kit v0.1
+# github_dev — Agent Kit v0.2
 
 Copilot / Codex向けの、根拠を残して育てるAgentキット。
 初版は調査・仕様照合を中心にし、保守と汎用のシャーロック皇帝を備える。
@@ -23,17 +23,17 @@ Copilot / Codex向けの、根拠を残して育てるAgentキット。
 1. このリポジトリをcloneしてVS Codeで開く。Copilot harnessを選ぶ。
 2. Agent Customizationsで親3種とSkillsを確認する。Agent一覧のIDと上の表を対応させる。
 3. モデル選択欄で、利用可能ならFusionを選ぶ。モデルを定義に固定していないためホスト設定を利用する。
-4. 例: `analysis-manager`を選び「このドライバの終了処理を仕様と照合。変更は不要」と依頼する。
+4. `analysis-manager`を選び、下記のステップ別プロンプトで依頼する。
 5. 子の実行時モデル、ツール、返却結果をUIで確認する。子へのFusion継承は未検証。
 
 Copilot向け定義は`.github/agents/`、Skillsは`.github/skills/`。
 `agents`や`handoffs`等のLocal専用設定は生成しない。Fusionはモデル実行の仕組みであり、子の起動機構ではない。
-調査用のCopilot定義はread/search/web/agentを中心にし、shell/editを公開しない。
-OS調査コマンドはユーザーが収集した出力を渡すか、別途許可した実行環境で取得する。
+解析親には結果・統計の保存のためedit/executeを公開する。子は原資料を編集しない。
+ツール許可はパス制限ではない。原資料はread-only、local-resultsだけ書き込み可能な環境を推奨する。
 
 ## Codex CLIで使う
 
-1. 対象プロジェクトのルートでCodexを起動する。初回調査は親セッションをread-only相当の権限に設定する。
+1. 対象プロジェクトのルートでCodexを起動する。原資料の変更は禁止し、local-resultsへの保存だけ許可する。
 2. 次のいずれかを依頼する（本キットのAGENTS.mdが親ロールへ案内する）。
    - `調査・仕様照合として、この範囲を調べて。変更しないで。`
    - `Agent保守として、このキットの問題を診断して。まず修正案まで。`
@@ -58,7 +58,128 @@ python3 tools/install.py --target /absolute/path/to/target-project --apply
 インストールはローカルファイル配置だけで、commit、MCP導入、モデル契約は行わない。
 保守作業はこの管理元リポジトリで行い、生成済み定義を対象へ再適用する。導入先ではtools/tests/docsは配布しない。
 
-## 保守と検証
+## ステップ別の依頼と成果物
+
+source → spec → compareを**独立した実行**にする。sourceとspecの順序は入れ替え可能。
+別セッション、または入力を限定した子に分離し、前段の結論を次段に混入させない。
+各依頼で`agent-kit/workflow.md`を読み、開始記録→解析→結果保存→終了記録を行う。
+以下の`<...>`は実値へ置換する。原資料を書き換える依頼ではない。
+
+| ステップ | 入力・版情報 | 出力の内容 |
+| --- | --- | --- |
+| source | ソース絶対パス、commit、dirty差分ハッシュ、ビルド構成、範囲、領域、CodeGraph版・索引版 | 実装の入口・経路・状態・資源・根拠・未探索範囲 |
+| spec | 文書絶対パス、文書ID・改訂、承認状態、適用製品版・構成、範囲 | 要求ID・節／ページ、入出力・例外・曖昧さ・欠落 |
+| compare | 完了したsource/specのrun絶対パス、適用版・構成の整合 | 一致・不一致・実装未発見・文書化なし・不明の対応表 |
+| other | 保守・テスト・相談等のタスク、対象、条件 | 作業結果・検証・残課題 |
+
+共通で案件ID、キットcommit、実行ホスト名・版を明示する。文書ハッシュと依存レポートのハッシュは記録ツールが固定する。
+
+### 1. ソース解析のプロンプト
+
+```text
+analysis-managerとしてsourceステップだけを実行してください。
+対象プロジェクト: <絶対パス> / 案件ID: <case-id>
+source_root: <絶対パス> / source_commit: <SHA>
+dirty_state: <clean、または差分とそのSHA-256>
+build_config: <kernel/vendor版・設定、またはMACHINE/DISTRO等>
+domain: <driver|yocto|mw> / scope: <対象と除外範囲>
+kit_revision: <キットSHA> / host_version: <製品名と版>
+CodeGraph: <導入版、索引root・commit・dirty状態・構成>
+workflow.mdに従い入力JSONを作成してstartを実行する。
+仕様書と仕様解析結果は読まない。CodeGraphで入口・参照・依存を探索し、
+queryと応答を保存、原ソースで根拠を確認する。未接続・古い索引ならblocked。
+driverは登録・probe/remove・公開I/O・非同期・解放、MWは公開API・初期化終了・
+データ経路・非同期・障害復旧、yoctoはレシピ・依存・構成・タスクを優先する。
+レシピ意味論などグラフの未対応範囲は明示し、必要な展開結果を別途要求する。
+report.txtと統計を所定runへ保存する。次のステップは開始しない。
+```
+
+### 2. 仕様書解析のプロンプト
+
+```text
+analysis-managerとしてspecステップだけを実行してください。
+対象プロジェクト: <絶対パス> / 案件ID: <case-id>
+spec_id: <文書ID> / spec_revision: <改訂番号・改訂日>
+spec_files: [<原本の絶対パス>]
+承認状態・適用製品版・構成: <値。不明なら不明と明示>
+domain: <driver|yocto|mw> / scope: <対象章と除外範囲>
+kit_revision: <キットSHA> / host_version: <製品名と版>
+workflow.mdに従い入力JSONを作成してstartを実行する。
+ソースとsource解析結果は読まない。要求ID、節／ページ、前提、入力、処理、
+出力、例外、タイミングを抽出し、曖昧さ・矛盾・不足・未読の図表を区別する。
+存在しないプログラム仕様を推測で補わない。report.txtと統計を所定runへ保存する。
+次のステップは開始しない。
+```
+
+### 3. 照合のプロンプト
+
+```text
+analysis-managerとしてcompareステップだけを実行してください。
+対象プロジェクト: <絶対パス> / 案件ID: <case-id>
+source_run: <完了source runの絶対パス>
+spec_run: <完了spec runの絶対パス>
+domain: <driver|yocto|mw> / scope: <照合範囲>
+kit_revision: <キットSHA> / host_version: <製品名と版>
+workflow.mdに従い入力JSONを作成しstartで依存runを検証する。
+対象版・構成の適合を確認し、不一致なら照合を保留する。
+両レポートを双方向で照合する。未発見と不存在、未文書化と実装不良を混同しない。
+追加の原資料解析は別source/spec runとして提案し、その場で混ぜない。
+対応表・根拠・不明・確認優先度をreport.txtへ、統計をrecord.jsonへ保存する。
+```
+
+### 4. その他の処理のプロンプト
+
+```text
+<agent-maintainer|sherlock-emperor>としてotherステップを実行してください。
+対象プロジェクト: <絶対パス> / 案件ID: <case-id>
+task: <依頼内容と変更許可範囲> / scope: <対象と除外>
+kit_revision: <キットSHA> / host_version: <製品名と版>
+workflow.mdに従い開始・終了・結果・統計を記録してください。
+許可されていない変更、インストール、外部送信はしないでください。
+```
+
+### 保存・記録コマンド
+
+保存先は対象プロジェクトの`local-results/<case-id>/<source|spec|compare|other>/<run-id>/`。
+UTF-8の`report.txt`、`input.json`、`start.json`、`record.json`を保存する。
+source成功時は`codegraph.txt`も保存。再実行は新runで、上書きしない。
+途中終了はstart.jsonだけの未完了runとして残る。公開Gitには結果を追加しない。
+
+例えばotherの入力JSONは次の形式（source/spec/compareの必須キーは上表とworkflow.md参照）。
+
+```json
+{"task":"Agent定義の点検","scope":"agent-kit","kit_revision":"<SHA>","host_version":"<製品名・版>"}
+```
+
+```sh
+python3 agent-kit/run.py start --project /absolute/project --case case001 --stage other --input /absolute/input.json
+# 表示されたrunパスを以下へ指定。draft.txtとusage.jsonは実行結果から作成する。
+python3 agent-kit/run.py finish --run /absolute/run --report /absolute/draft.txt --status completed --usage /absolute/usage.json
+# sourceの成功時は上のfinishに --codegraph-evidence /absolute/graph-response.txt を追加
+# 保留・失敗も --status blocked または failed で理由を保存
+python3 agent-kit/run.py usage --run /absolute/run --input /absolute/later-usage.json
+```
+
+### 使用量・レートの扱い
+
+開始／終了時刻・経過秒はスクリプトで記録する。モデル呼び出しごとに親子ID、Agent名、
+要求モデル／実モデル、入力／出力／キャッシュ／推論トークン、消費クレジット、単価、
+倍率・割引・適用日時・確認日時・出典を`usage.events`に残す。詳細形式は[workflow.md](agent-kit/workflow.md)。
+ここでトークン量は**実消費量**。モデルのコンテキスト上限や推奨予算とは別の指標。
+
+**ホスト別の使用量自動取得は未実装**。UI・API・承認済みログで取得できた値を記録し、
+取得不能を0扱いしない。Fusionの実モデルが非公開ならnull。レートを推測で埋めない。
+全項目取得不能の場合も以下で記録できる。
+
+```json
+{"coverage":"unavailable","missing_reason":"実行ホストが呼び出し別のモデル・使用量を公開しない","events":[]}
+```
+
+遅れて判明した使用量は`usage`コマンドで版を追加する。集計時は最新の版だけを採用し、
+親の集計と子の使用量、キャッシュ／推論の内数を二重加算しない。
+この記録ツール自体はモデルやCodeGraphを起動しない。プロンプトに従うAgentがツールを実行する構成。
+
+## キットの保守と検証
 
 ```sh
 python3 tools/render.py
