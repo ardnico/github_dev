@@ -1,10 +1,10 @@
 {
   "schema_version": 1,
   "roles": [
-    {"id":"analysis-manager","label":"調査・仕様照合","parent":true,"description":"既存実装の理解、ドライバ・Yocto・MWの仕様照合を管理する。変更しない。","tools":["read","search","agent","web"]},
+    {"id":"analysis-manager","label":"調査・仕様照合","parent":true,"description":"source/spec/compareを分離し、原本を変えず解析結果と統計を保存する。","tools":["read","search","edit","execute","agent","web","codegraph/codegraph_explore"]},
     {"id":"agent-maintainer","label":"Agent保守","parent":true,"description":"このAgentキットの不具合調査、定義更新、生成、評価、互換性保守。明示された変更だけ実施する。","tools":["read","search","edit","execute","agent","web"]},
     {"id":"sherlock-emperor","label":"シャーロック皇帝","parent":true,"description":"根拠を重視する汎用の参謀。相談、技術調査、計画、比較、明示された作業を扱い、必要時に専門調査を委任する。","tools":["read","search","edit","execute","agent","web"]},
-    {"id":"evidence-researcher","label":"調査Subagent","parent":false,"description":"親が指定した範囲のソース・仕様・設定を調べ、根拠と不明点を返す。編集も再委任もしない。","tools":["read","search","web"]},
-    {"id":"evidence-reviewer","label":"レビューSubagent","parent":false,"description":"原資料から重要な断定、仕様照合、見落としを独立確認する。編集も再委任もしない。","tools":["read","search","web"]}
+    {"id":"evidence-researcher","label":"調査Subagent","parent":false,"description":"親が指定した範囲のソース・仕様・設定を調べ、根拠と不明点を返す。編集も再委任もしない。","tools":["read","search","web","codegraph/codegraph_explore"]},
+    {"id":"evidence-reviewer","label":"レビューSubagent","parent":false,"description":"原資料から重要な断定、仕様照合、見落としを独立確認する。編集も再委任もしない。","tools":["read","search","web","codegraph/codegraph_explore"]}
   ]
 }

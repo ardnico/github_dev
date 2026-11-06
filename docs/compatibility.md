@@ -20,13 +20,13 @@
 
 ## CodeGraph / Serena
 
-初版は未接続・未導入。基本検索だけで使える。
+本キット自体はMCPを導入・接続しない。v0.2のsource完了にはCodeGraphが必須で、未接続ならblocked。仕様解析は単独実行できる。
 利用候補は https://github.com/colbymchenry/codegraph と https://github.com/oraios/serena 。
 導入する際は承認済み版、実際の導入内容、依存、送信先、更新動作を確認する。
 
 1. 別の検証用環境で起動し、実際のツール一覧を記録する。
 2. 読み取り用だけを承認する。Serenaの編集／shell操作等を一括で許可しない。
-3. Copilotは必要なMCPツールだけtoolsへ追加して再生成する。`server/*`の無条件許可は避ける。
+3. CopilotのMCPサーバー名は`codegraph`とし、定義済みの`codegraph/codegraph_explore`が実際に公開されることを確認する。ホストで名称が異なる場合はcatalogを合わせて再生成する。`server/*`の無条件許可は避ける。
 4. Codexは親セッション側でMCPと権限を設定する。子TOMLで分離できると仮定しない。
 5. 索引commit、dirty状態、build条件を記録する。間接参照や推定辺は原資料で確認する。
 6. C/C++の言語サーバー設定やcompile_commands.jsonが対象構成と一致するか確認する。

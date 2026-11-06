@@ -15,7 +15,7 @@ def plan(target):
         raise ValueError("Target must be an existing project directory")
     source_files = [ROOT / p for p in SINGLES]
     for directory in DIRECTORIES:
-        source_files += sorted(p for p in (ROOT / directory).rglob("*") if p.is_file())
+        source_files += sorted(p for p in (ROOT / directory).rglob("*") if p.is_file() and "__pycache__" not in p.parts and p.suffix != ".pyc")
     copies = []
     conflicts = []
     for source in source_files:
