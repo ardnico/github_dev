@@ -1,0 +1,10 @@
+{
+  "schema_version": 1,
+  "mode": "host-selected",
+  "automatic_routing_implemented": false,
+  "copilot": {"default":"inherit-model-picker", "fusion":"optional-host-selection", "fixed_models":[]},
+  "codex": {"default":"inherit-parent", "fixed_models":[]},
+  "rules": ["Evaluate with fixed model before cost comparisons", "Fusion is not a subagent scheduler", "Never assume Copilot discounts apply to Codex", "Do not infer capability from price or function length"],
+  "promotion_conditions": ["unresolved indirect call", "concurrency or lifetime uncertainty", "conflicting evidence"],
+  "note": "Policy metadata only; no runtime model switch is performed by this file. Record verified model ID, availability, evaluated tasks, price source and expiry before adding a fixed model."
+}
