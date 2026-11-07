@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 import hashlib
 import json
 import math
+import os
 from pathlib import Path
 import re
 import sqlite3
@@ -31,7 +32,7 @@ def read(path):
 
 
 def write(path, data):
-    with Path(path).open("x", encoding="utf-8") as stream:
+    with os.fdopen(os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), "w", encoding="utf-8") as stream:
         json.dump(data, stream, ensure_ascii=False, indent=2, allow_nan=False)
         stream.write("\n")
 
@@ -86,7 +87,7 @@ def usage_check(data):
     return data
 
 
-def start(project, case, stage, inputs):
+def start(project, case, stage, inputs, output_root=None):
     if not re.fullmatch(r"[A-Za-z0-9_-]{1,80}", case):
         raise ValueError("Invalid case ID")
     project = Path(project).resolve()
@@ -116,13 +117,21 @@ def start(project, case, stage, inputs):
                 raise ValueError("Dependency was modified")
             inputs["dependencies"][dependency] = {"run_id":record["run_id"], "report_sha256":record["report_sha256"], "input_sha256":record["input_sha256"]}
     run_id = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ") + "-" + uuid.uuid4().hex[:12]
-    run = project / "local-results" / case / stage / run_id
-    if any(p.is_symlink() for p in [run, *run.parents] if p != project):
+    base = Path(output_root).expanduser().absolute() if output_root is not None else Path.home() / "agent-analysis-results"
+    project_id = re.sub(r"[^A-Za-z0-9_-]", "-", project.name)[:40] or "project"
+    project_id += "-" + hashlib.sha256(os.fsencode(project)).hexdigest()[:10]
+    run = base / project_id / case / stage / run_id
+    if any(p.is_symlink() for p in [base, *base.parents, run, *run.parents] if p != Path("/")):
         raise ValueError("Symlink output path not allowed")
-    run.mkdir(parents=True, exist_ok=False)
+    base.mkdir(parents=True, exist_ok=True, mode=0o700)
+    if base.stat().st_mode & 0o077:
+        raise ValueError("Output root must be private (mode 0700); select another directory or change permissions explicitly")
+    for directory in (base / project_id, base / project_id / case, base / project_id / case / stage):
+        directory.mkdir(mode=0o700, exist_ok=True)
+    run.mkdir(mode=0o700)
     write(run / "input.json", inputs)
     # start.json remains immutable; record.json is written only on finish.
-    write(run / "start.json", {"schema_version":1, "run_id":run_id, "case_id":case, "project":str(project), "stage":stage, "status":"running", "started_at":now(), "input_sha256":digest(run / "input.json")})
+    write(run / "start.json", {"schema_version":1, "run_id":run_id, "case_id":case, "project":str(project), "output_root":str(base), "stage":stage, "status":"running", "started_at":now(), "input_sha256":digest(run / "input.json")})
     return run
 
 
@@ -161,9 +170,9 @@ def finish(run, report, status, usage, graph=None):
             raise ValueError("Source completion needs CodeGraph evidence")
         record["codegraph_db"] = str(db)
         record["codegraph_evidence_sha256"] = digest(graph)
-        with (run / "codegraph.txt").open("x", encoding="utf-8") as stream:
+        with os.fdopen(os.open(run / "codegraph.txt", os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), "w", encoding="utf-8") as stream:
             stream.write(Path(graph).read_text(encoding="utf-8"))
-    with (run / "report.txt").open("x", encoding="utf-8") as stream:
+    with os.fdopen(os.open(run / "report.txt", os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), "w", encoding="utf-8") as stream:
         stream.write(text)
     record.update(status=status, ended_at=now(), report_sha256=digest(run / "report.txt"), usage=usage)
     record["elapsed_seconds"] = (stamp(record["ended_at"]) - stamp(record["started_at"])).total_seconds()
@@ -176,6 +185,7 @@ def main():
     subs = parser.add_subparsers(dest="action", required=True)
     command = subs.add_parser("start")
     command.add_argument("--project", required=True)
+    command.add_argument("--output-root", help="Defaults to ~/agent-analysis-results on the execution host")
     command.add_argument("--case", required=True)
     command.add_argument("--stage", choices=REQUIRED, required=True)
     command.add_argument("--input", required=True)
@@ -191,7 +201,7 @@ def main():
     args = parser.parse_args()
     try:
         if args.action == "start":
-            print(start(args.project, args.case, args.stage, read(args.input)))
+            print(start(args.project, args.case, args.stage, read(args.input), args.output_root))
         elif args.action == "finish":
             result = finish(args.run, args.report, args.status, read(args.usage), args.codegraph_evidence)
             print(result["run_id"], result["status"])

@@ -2,11 +2,11 @@
 
 ## 保存先と権限
 
-対象プロジェクトの `local-results/<case-id>/<stage>/<run-id>/` にUTF-8で保存する。
+実行ホストのホーム配下 `~/agent-analysis-results/<project-id>/<case-id>/<stage>/<run-id>/` にUTF-8で保存する。project-idは対象root名と絶対パスの短いハッシュで区別する。`--output-root`で保存ルートのみ変更できる（`--project`は解析対象のまま）。startが表示する絶対runパスを採用し、リモート／コンテナではその実行環境のホームになる。
 各runはinput.json（入力スナップショット）、record.json（時刻・状態・統計）、report.txt（結果）を持つ。
 上書きしない。再解析は新run。途中停止はrunningのまま残り、未完了と分かる。
-公開リポジトリに結果をcommitしない。導入先でもlocal-results/をignoreする（install.pyは既存.gitignoreを変更しない）。
-親にレポート保存用edit/executeを許可するが、原本変更は禁止。ホストでは入力read-only、結果ディレクトリのみwrite可能にすることを推奨。
+公開リポジトリに結果をcommitしない。旧来の対象プロジェクト内`local-results/`は移動・削除しない。保存ルートは本人のみの0700、runファイルは0600で作成する（既存の共有権限ルートは拒否）。
+親にレポート保存用edit/executeを許可するが、原本変更は禁止。ホストでは入力read-only、結果ディレクトリのみwrite可能にすることを推奨。ホーム下への書き込みをホストで許す必要がある。
 このファイルやtool一覧自体はパス単位のsandboxではない。許可ツールを増やした点はv0.1からの変更。
 
 ## ステップ
@@ -22,7 +22,7 @@ dirtyなら差分をハッシュで識別する。kernel/vendor版、MACHINE/DIS
 CodeGraphの版、DB絶対パス、索引rootと版、status、実際の照会と結果を作業用テキストに残す。finishがそのテキストをrun内のcodegraph.txtへ固定する。原ソースで重要な辺を確認する。
 DBなし・未索引・古い索引・対象不一致・照会不能はblocked。ユーザーが代替を承認した場合でも通常source完了とは別扱いにする。
 Yoctoの.bb/.bbappend等はCodeGraphが意味を完全解決できると仮定しない。対応範囲を明記し、BitBakeメタデータと提供済み展開結果で補う。
-結果: 対象と版、CodeGraph証拠、入口とシナリオ、資源・状態・依存、観測／推論／不明、未探索範囲。仕様との一致は判定しない。
+結果: 対象と版、CodeGraph証拠、入口とシナリオ、資源・状態・依存、観測／推論／不明、未探索範囲。仕様との一致は判定しない。driverの詳しい表示契約は`agent-kit/reporting.md`を参照。
 
 ### spec
 
@@ -49,7 +49,7 @@ CodeGraphの初期化／索引更新は別の明示許可で実施し、その�
 
 ## 共通実行方法
 
-開始直前に `python3 agent-kit/run.py start --project <対象root> --case <案件ID> --stage <source|spec|compare|other> --input <入力JSON>` を実行。
+開始直前に `python3 agent-kit/run.py start --project <対象root> --case <案件ID> --stage <source|spec|compare|other> --input <入力JSON> [--output-root <私有の保存root>]` を実行。
 出力されたrunディレクトリ内で作業する。最終報告をdraft.txtとして保存し、終了時にfinishへ渡す。
 `python3 agent-kit/run.py finish --run <run-dir> --report <draft.txt> --status completed --usage <usage.json>`
 失敗／保留もfailed/blockedでfinishし、理由をレポートへ保存する。途中で落ちたrunを完了扱いにしない。

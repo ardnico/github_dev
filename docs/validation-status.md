@@ -1,5 +1,12 @@
 # 検証記録
 
+## 保存先・driver報告改善（2026-11-07）
+
+- デフォルト結果を実行ホストのホーム下に分離。対象rootとの衝突防止にbasename+パスハッシュを使用。私有保存ルート0700、記録ファイル0600、`--output-root`で上書き可能。
+- driverレポートに公開入口、関連構造体・ヘッダ、open/close/ioctl等の有無、hard/threaded IRQ・NAPI/workの区別、資源寿命、要確認事項と証拠索引の表示契約を追加。
+- Pythonテスト16件PASS、生成12ファイルの整合検査PASS。実際のCopilot/Codexと顧客ドライバでの品質評価は未実施。
+
+
 ## v0.2.1 CodeGraphの意味の修正（2026-11-07）
 
 - sourceはローカルの`.codegraph/codegraph.db`に索引を構築し、そのDBへの照会を用いる。MCPの単一ツール起動だけを必須にする誤解を修正。

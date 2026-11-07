@@ -3,6 +3,7 @@ from pathlib import Path
 import tempfile
 import sqlite3
 import unittest
+from unittest.mock import patch
 
 MODULE = Path(__file__).resolve().parents[1] / "agent-kit/run.py"
 spec = importlib.util.spec_from_file_location("run_recorder", MODULE)
@@ -24,7 +25,7 @@ class RunTests(unittest.TestCase):
         inputs = dict(self.base, **extra)
         if stage == "other":
             inputs["task"] = "test"
-        return recorder.start(self.root, "test-case", stage, inputs)
+        return recorder.start(self.root, "test-case", stage, inputs, self.root / "private-results")
 
     def source(self):
         return self.start("source", source_root=str(self.root), source_commit="test", dirty_state="clean", build_config="test", domain="driver")
@@ -34,6 +35,8 @@ class RunTests(unittest.TestCase):
 
     def test_output_and_no_overwrite(self):
         run = self.start()
+        self.assertEqual(run.parts[-3], "test-case")
+        self.assertEqual(run.parents[3].name, "private-results")
         result = self.finish(run)
         self.assertGreaterEqual(result["elapsed_seconds"], 0)
         self.assertEqual(result["usage"]["coverage"], "unavailable")
@@ -96,6 +99,23 @@ class RunTests(unittest.TestCase):
             recorder.start(self.root, "../escape", "other", dict(self.base, task="test"))
         with self.assertRaises(ValueError):
             recorder.start(self.root, "case", "source", self.base)
+
+    def test_default_home_and_project_separation(self):
+        home = self.root / "home"
+        home.mkdir(mode=0o700)
+        with patch.object(Path, "home", return_value=home):
+            run = recorder.start(self.root, "test-case", "other", dict(self.base, task="test"))
+        self.assertTrue(run.is_relative_to(home / "agent-analysis-results"))
+        self.assertFalse(run.is_relative_to(self.root / "local-results"))
+        self.assertEqual(recorder.read(run / "start.json")["project"], str(self.root.resolve()))
+        self.assertEqual(run.stat().st_mode & 0o777, 0o700)
+        self.assertEqual((run / "input.json").stat().st_mode & 0o777, 0o600)
+
+    def test_reject_shared_output_root(self):
+        shared = self.root / "shared"
+        shared.mkdir(mode=0o755)
+        with self.assertRaisesRegex(ValueError, "private"):
+            recorder.start(self.root, "test-case", "other", dict(self.base, task="test"), shared)
 
 
 if __name__ == "__main__":
