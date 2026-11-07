@@ -49,6 +49,19 @@ def prepare(run, executable=None, invoke=None):
         if not command:
             raise ValueError("CodeGraph CLI not installed; do not auto-install")
         call("version")
+        # Multiple unrelated packages expose the same 'codegraph' executable.
+        # The selected implementation uses codegraph.db, not manifest.json.
+        probe = call("status", str(source), "--json")
+        try:
+            identity = json.loads(probe.stdout)
+        except json.JSONDecodeError as error:
+            raise ValueError("Unrecognized CodeGraph status JSON; check executable/package identity") from error
+        if "manifestPath" in identity or "schemaVersion" in identity:
+            raise ValueError("Wrong codegraph CLI (@lzehrung/codegraph format). Expected @colbymchenry/codegraph; select its executable with --codegraph-bin. Existing data was not modified")
+        if not all(key in identity for key in ("initialized", "projectPath", "indexPath")):
+            raise ValueError("Unrecognized CodeGraph provider; expected @colbymchenry/codegraph status format")
+        if Path(identity["projectPath"]).resolve() != source:
+            raise ValueError("CodeGraph status resolved another project root; do not reuse this index")
         if not db.is_file():
             if db_dir.exists() and (not db_dir.is_dir() or any(db_dir.iterdir())):
                 raise ValueError("Nonempty .codegraph without DB; inspect manually")
@@ -56,11 +69,19 @@ def prepare(run, executable=None, invoke=None):
             call("init", str(source), "--local-only")
         else:
             output["action"] = "reuse"
+            if identity["initialized"] is not True:
+                raise ValueError("CodeGraph DB exists but selected CLI does not recognize it; do not reinitialize or delete")
         if not db.is_file():
             raise ValueError("CodeGraph DB absent after init")
         with sqlite3.connect(db.as_uri() + "?mode=ro", uri=True) as connection:
             connection.execute("SELECT name FROM sqlite_master LIMIT 1").fetchone()
-        call("status", str(source), "--json", "--strict")
+        strict = call("status", str(source), "--json", "--strict")
+        try:
+            checked = json.loads(strict.stdout)
+        except json.JSONDecodeError as error:
+            raise ValueError("CodeGraph strict status is not JSON") from error
+        if checked.get("initialized") is not True or Path(checked.get("projectPath", "")).resolve() != source:
+            raise ValueError("CodeGraph index is not initialized for the selected source root")
         output["status"] = "prepared"
         return output
     except (ValueError, sqlite3.DatabaseError, subprocess.TimeoutExpired, OSError) as error:
@@ -77,9 +98,10 @@ def prepare(run, executable=None, invoke=None):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--run", required=True)
+    parser.add_argument("--codegraph-bin", help="Explicit executable from @colbymchenry/codegraph; no installation performed")
     args = parser.parse_args()
     try:
-        output = prepare(args.run)
+        output = prepare(args.run, executable=args.codegraph_bin)
     except (ValueError, OSError, KeyError) as error:
         parser.error(str(error))
     print(output["status"] + ": " + output["source_root"])

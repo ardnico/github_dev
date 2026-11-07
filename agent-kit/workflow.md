@@ -16,9 +16,9 @@
 入力: source_root、source_commit、dirty_state、build_config、scope、domain（driver/yocto/mw）、kit_revision、host_version。
 dirtyなら差分をハッシュで識別する。kernel/vendor版、MACHINE/DISTRO、生成ヘッダ等はbuild_configに記載する。
 仕様本文・仕様解析結果は読まない。関数・登録・状態・資源・エラー・終了・非同期経路を領域Skillで分析する。
-source runを開始した親Agentが、対象rootを絶対パスで確定し、git commit/dirty差分・解析範囲と対象rootが一致するか確認する。その後 `python3 agent-kit/prepare_codegraph.py --run <source-run絶対パス>` を実行する。スクリプトはCLIの存在を確認し、`<source_root>/.codegraph/codegraph.db`がない場合だけ、`.codegraph/`が存在しないか空であれば`codegraph init <source_root> --local-only`を**一度だけ**実行する。本依頼はこの「DB不在時の初期化」を許可している。`--local-only`は対象のローカルGit除外設定等へ書き込む可能性があるため実行前後の差分を確認する。CLI導入や`codegraph install`、外部からの自動ダウンロードは別の許可が必要。
+source runを開始した親Agentが、対象rootを絶対パスで確定し、git commit/dirty差分・解析範囲と対象rootが一致するか確認する。その後 `python3 agent-kit/prepare_codegraph.py --run <source-run絶対パス>` を実行する。使用対象は`@colbymchenry/codegraph`であり、同名の別実装を実行しない。スクリプトは`status --json`の応答形式から実装とrootを確認してから、`<source_root>/.codegraph/codegraph.db`がない場合だけ、`.codegraph/`が存在しないか空であれば`codegraph init <source_root> --local-only`を**一度だけ**実行する。PATHで別実装が選ばれる場合は承認済みの正しい実行ファイルを`--codegraph-bin <絶対パス>`で指定する。本依頼はこの「DB不在時の初期化」を許可している。`--local-only`は対象のローカルGit除外設定等へ書き込む可能性があるため実行前後の差分を確認する。CLI導入や`codegraph install`、外部からの自動ダウンロードは別の許可が必要。
 既存DBがあればinitを実行しない。`.codegraph/`が空でないのにDBがない、シンボリックリンク／別の索引がある、または既存DBが破損している場合も勝手に削除・上書き・強制再索引せずblockedとする。
-初期化の有無、時刻・コマンド・終了コード・出力と版はsource runの`codegraph-preparation.json`へ保存される。スクリプトがblockedなら理由をreport.txtと統計に記録してblockedで終了する。スクリプトはDBと`status --json --strict`を確認するが、実際の照会と対象commit/dirty状態/構成の意味的整合は親Agentが確認する。既存DBの不整合・古い索引の`sync`/再索引は自動実行せず、必要性を報告して確認を求める。自動同期を盲信しない。
+初期化の有無、時刻・コマンド・終了コード・出力と版はsource runの`codegraph-preparation.json`へ保存される。別実装の`3.1.3`/`manifestPath`形式が返った場合、DBを削除・再初期化せず、同名CLI衝突としてblockedにする。スクリプトがblockedなら理由をreport.txtと統計に記録してblockedで終了する。スクリプトはDBと、対象実装に対応する`status --json --strict`を確認するが、実際の照会と対象commit/dirty状態/構成の意味的整合は親Agentが確認する。既存DBの不整合・古い索引の`sync`/再索引は自動実行せず、必要性を報告して確認を求める。自動同期を盲信しない。
 照会は対象rootで`codegraph explore <質問>`、`query`、`callers`、`callees`、`impact`等のCLI、または同じローカルDBを参照するMCPを用いる。実行時の作業rootを明示し、違うDBを参照しない。
 CodeGraphの版、DB絶対パス、索引rootと版、status、実際の照会と結果を作業用テキストに残す。finishがそのテキストをrun内のcodegraph.txtへ固定する。原ソースで重要な辺を確認する。
 初期化後もDBがない・未索引・古い索引・対象不一致・照会不能ならblocked。ユーザーが代替を承認した場合でも通常source完了とは別扱いにする。
