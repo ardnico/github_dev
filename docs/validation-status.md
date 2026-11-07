@@ -1,5 +1,12 @@
 # 検証記録
 
+## 同名CodeGraph CLIの衝突対策（2026-11-08）
+
+- 実例の`3.1.3`/`schemaVersion`/`manifestPath`は`@lzehrung/codegraph`。本キットが対象とする`@colbymchenry/codegraph`とは異なる実装と確認。
+- 初期化前に`status --json`のプロバイダー形式とrootを確認。別実装なら既存DBを変更せず保留し、明示的な`--codegraph-bin`で対象CLIを選べるようにした。
+- Pythonテスト22件PASS（模擬CLI）。利用者環境の実行ファイル・DB形式は未調査であり、実機CLI受入は未実施。
+
+
 ## DB不在時のAgent初期化（2026-11-07）
 
 - source runで初期化ヘルパーがDB不在を確認し、未初期化ルートに限って`codegraph init <root> --local-only`を一度だけ実行。既存DBは再利用。実行結果を`codegraph-preparation.json`に記録。

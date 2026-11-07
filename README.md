@@ -84,13 +84,14 @@ dirty_state: <clean、または差分とそのSHA-256>
 build_config: <kernel/vendor版・設定、またはMACHINE/DISTRO等>
 domain: <driver|yocto|mw> / scope: <対象と除外範囲>
 kit_revision: <キットSHA> / host_version: <製品名と版>
-CodeGraph: <導入版、.codegraph/codegraph.dbの絶対パス、索引root・対象版・構成>
+CodeGraph: <@colbymchenry/codegraphの導入版と実行ファイル、.codegraph/codegraph.dbの絶対パス、索引root・対象版・構成>
 workflow.mdに従い入力JSONを作成してstartを実行する。
 仕様書と仕様解析結果は読まない。対象プロジェクトのローカルDBの存在と
 codegraph status --json --strictを確認する。照会は対象rootでCodeGraph CLI
 （explore/query/callers/callees等）または同じDBに接続したMCPで行い、
 status、照会コマンド/質問、結果を保存して原ソースで根拠を確認する。
 source runのstart直後、`python3 agent-kit/prepare_codegraph.py --run <source-run>`を実行する。
+同名の別CLIがPATHにある場合、承認済みの対象実装を`--codegraph-bin /absolute/path/to/codegraph`で指定する。
 DBがなければ対象rootを確認してcodegraph init <source_root> --local-onlyを一度だけ実行し、
 初期化コマンド・時刻・終了コード・出力をcodegraph-preparation.jsonへ記録する。
 その後statusと照会を再実行する。CLI自体が未導入、
@@ -205,6 +206,10 @@ python3 agent-kit/run.py usage --run /absolute/run --input /absolute/later-usage
 ### CodeGraphの初期化（sourceでDBがない場合はAgentが実行）
 
 意図するCodeGraphは[このローカル索引型の実装](https://github.com/colbymchenry/codegraph)。
+`@lzehrung/codegraph`等にも同名CLIがあり、バージョン3.1.3の`schemaVersion`/`manifestPath`形式は**別実装**。
+`initialized: false`はそちらのmanifest未作成を指し、`.codegraph/codegraph.db`の有無を判定していない。
+別実装の`init`/`sync`を既存の`.codegraph/`へ実行しない。まず`type -a codegraph`と
+`readlink -f "$(command -v codegraph)"`等で実行ファイルを特定し、対象実装のCLIを選び直す。
 `codegraph init`でソースを解析し、対象内の`.codegraph/codegraph.db`（SQLite）に
 シンボル・呼び出し・依存関係を記録する。AgentはDBをCLIまたはローカルMCP経由で照会する。
 MCPだけを接続してもDBはできない。`codegraph install`はAgent接続の設定であり、索引作成とは別。
