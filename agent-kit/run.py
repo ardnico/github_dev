@@ -6,7 +6,9 @@ import json
 import math
 from pathlib import Path
 import re
+import sqlite3
 import uuid
+from urllib.parse import quote
 
 REQUIRED = {
     "source": ("source_root", "source_commit", "dirty_state", "build_config", "domain"),
@@ -147,8 +149,17 @@ def finish(run, report, status, usage, graph=None):
     if not text.strip():
         raise ValueError("Empty report")
     if record["stage"] == "source" and status == "completed":
+        db = Path(inputs["source_root"]).resolve() / ".codegraph" / "codegraph.db"
+        if not db.is_file():
+            raise ValueError("Source completion needs local CodeGraph DB")
+        try:
+            with sqlite3.connect("file:" + quote(str(db)) + "?mode=ro", uri=True) as connection:
+                connection.execute("SELECT name FROM sqlite_master LIMIT 1").fetchone()
+        except sqlite3.DatabaseError as error:
+            raise ValueError("Invalid local CodeGraph DB") from error
         if graph is None or not Path(graph).read_text(encoding="utf-8").strip():
             raise ValueError("Source completion needs CodeGraph evidence")
+        record["codegraph_db"] = str(db)
         record["codegraph_evidence_sha256"] = digest(graph)
         with (run / "codegraph.txt").open("x", encoding="utf-8") as stream:
             stream.write(Path(graph).read_text(encoding="utf-8"))
