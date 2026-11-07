@@ -67,7 +67,7 @@ source → spec → compareを**独立した実行**にする。sourceとspecの
 
 | ステップ | 入力・版情報 | 出力の内容 |
 | --- | --- | --- |
-| source | ソース絶対パス、commit、dirty差分ハッシュ、ビルド構成、範囲、領域、CodeGraph版・索引版 | 実装の入口・経路・状態・資源・根拠・未探索範囲 |
+| source | ソース絶対パス、commit、dirty差分ハッシュ、ビルド構成、範囲、領域、CodeGraph版・ローカルDB状態 | 実装の入口・経路・状態・資源・根拠・未探索範囲 |
 | spec | 文書絶対パス、文書ID・改訂、承認状態、適用製品版・構成、範囲 | 要求ID・節／ページ、入出力・例外・曖昧さ・欠落 |
 | compare | 完了したsource/specのrun絶対パス、適用版・構成の整合 | 一致・不一致・実装未発見・文書化なし・不明の対応表 |
 | other | 保守・テスト・相談等のタスク、対象、条件 | 作業結果・検証・残課題 |
@@ -84,10 +84,13 @@ dirty_state: <clean、または差分とそのSHA-256>
 build_config: <kernel/vendor版・設定、またはMACHINE/DISTRO等>
 domain: <driver|yocto|mw> / scope: <対象と除外範囲>
 kit_revision: <キットSHA> / host_version: <製品名と版>
-CodeGraph: <導入版、索引root・commit・dirty状態・構成>
+CodeGraph: <導入版、.codegraph/codegraph.dbの絶対パス、索引root・対象版・構成>
 workflow.mdに従い入力JSONを作成してstartを実行する。
-仕様書と仕様解析結果は読まない。CodeGraphで入口・参照・依存を探索し、
-queryと応答を保存、原ソースで根拠を確認する。未接続・古い索引ならblocked。
+仕様書と仕様解析結果は読まない。対象プロジェクトのローカルDBの存在と
+codegraph status --json --strictを確認する。照会は対象rootでCodeGraph CLI
+（explore/query/callers/callees等）または同じDBに接続したMCPで行い、
+status、照会コマンド/質問、結果を保存して原ソースで根拠を確認する。
+DB未作成・未索引・古い索引・対象不一致ならblocked。索引更新は別途許可を得る。
 driverは登録・probe/remove・公開I/O・非同期・解放、MWは公開API・初期化終了・
 データ経路・非同期・障害復旧、yoctoはレシピ・依存・構成・タスクを優先する。
 レシピ意味論などグラフの未対応範囲は明示し、必要な展開結果を別途要求する。
@@ -142,7 +145,7 @@ workflow.mdに従い開始・終了・結果・統計を記録してください
 
 保存先は対象プロジェクトの`local-results/<case-id>/<source|spec|compare|other>/<run-id>/`。
 UTF-8の`report.txt`、`input.json`、`start.json`、`record.json`を保存する。
-source成功時は`codegraph.txt`も保存。再実行は新runで、上書きしない。
+source成功時はDB状態と照会履歴を記した`codegraph.txt`も保存。再実行は新runで、上書きしない。
 途中終了はstart.jsonだけの未完了runとして残る。公開Gitには結果を追加しない。
 
 例えばotherの入力JSONは次の形式（source/spec/compareの必須キーは上表とworkflow.md参照）。
@@ -155,7 +158,7 @@ source成功時は`codegraph.txt`も保存。再実行は新runで、上書き�
 python3 agent-kit/run.py start --project /absolute/project --case case001 --stage other --input /absolute/input.json
 # 表示されたrunパスを以下へ指定。draft.txtとusage.jsonは実行結果から作成する。
 python3 agent-kit/run.py finish --run /absolute/run --report /absolute/draft.txt --status completed --usage /absolute/usage.json
-# sourceの成功時は上のfinishに --codegraph-evidence /absolute/graph-response.txt を追加
+# sourceの成功時は上のfinishに --codegraph-evidence /absolute/db-query-log.txt を追加
 # 保留・失敗も --status blocked または failed で理由を保存
 python3 agent-kit/run.py usage --run /absolute/run --input /absolute/later-usage.json
 ```
@@ -178,6 +181,26 @@ python3 agent-kit/run.py usage --run /absolute/run --input /absolute/later-usage
 遅れて判明した使用量は`usage`コマンドで版を追加する。集計時は最新の版だけを採用し、
 親の集計と子の使用量、キャッシュ／推論の内数を二重加算しない。
 この記録ツール自体はモデルやCodeGraphを起動しない。プロンプトに従うAgentがツールを実行する構成。
+
+### CodeGraphの準備（対象環境で承認後）
+
+意図するCodeGraphは[このローカル索引型の実装](https://github.com/colbymchenry/codegraph)。
+`codegraph init`でソースを解析し、対象内の`.codegraph/codegraph.db`（SQLite）に
+シンボル・呼び出し・依存関係を記録する。AgentはDBをCLIまたはローカルMCP経由で照会する。
+MCPだけを接続してもDBはできない。`codegraph install`はAgent接続の設定であり、索引作成とは別。
+
+```sh
+codegraph version
+codegraph telemetry off              # 社内規則に応じて設定を確認
+codegraph init /absolute/project --local-only  # 許可を得た対象だけ。ローカルDBを作成しGit対象外へ
+codegraph status /absolute/project --json --strict
+cd /absolute/project
+codegraph explore '対象APIの入口から終了までの呼び出し経路'
+```
+
+このコマンド例は手順であり、本キットの導入処理が実行するものではない。索引の
+commit・dirty差分・ビルド構成の適合は別途確認する。コードグラフは静的構造なので、
+ドライバのIRQやYoctoレシピの実効構成まで自動的に証明できない。
 
 ## キットの保守と検証
 

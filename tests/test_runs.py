@@ -1,6 +1,7 @@
 import importlib.util
 from pathlib import Path
 import tempfile
+import sqlite3
 import unittest
 
 MODULE = Path(__file__).resolve().parents[1] / "agent-kit/run.py"
@@ -63,6 +64,9 @@ class RunTests(unittest.TestCase):
 
     def test_compare_dependencies_and_tampering(self):
         source = self.source()
+        db = self.root / ".codegraph" / "codegraph.db"
+        db.parent.mkdir()
+        sqlite3.connect(db).close()
         self.finish(source, graph=self.draft)  # Synthetic fixture, not a real CodeGraph run.
         document = self.root / "spec.txt"
         document.write_text("requirement")

@@ -20,15 +20,15 @@
 
 ## CodeGraph / Serena
 
-本キット自体はMCPを導入・接続しない。v0.2のsource完了にはCodeGraphが必須で、未接続ならblocked。仕様解析は単独実行できる。
+本キット自体はCodeGraphを導入・索引作成しない。source完了には対象プロジェクトのローカルSQLite DB（`.codegraph/codegraph.db`）の索引と照会が必須。MCP接続は任意の照会経路であり、CLIでもよい。仕様解析は単独実行できる。
 利用候補は https://github.com/colbymchenry/codegraph と https://github.com/oraios/serena 。
 導入する際は承認済み版、実際の導入内容、依存、送信先、更新動作を確認する。
 
-1. 別の検証用環境で起動し、実際のツール一覧を記録する。
+1. 承認済み版を検証環境で導入し、対象プロジェクトで`codegraph init`（DB作成・索引）を実行する前に対象・保存先・テレメトリ設定を確認する。CodeGraphは匿名使用統計の設定を持つため、社内方針に応じて無効化する。
 2. 読み取り用だけを承認する。Serenaの編集／shell操作等を一括で許可しない。
-3. CopilotのMCPサーバー名は`codegraph`とし、定義済みの`codegraph/codegraph_explore`が実際に公開されることを確認する。ホストで名称が異なる場合はcatalogを合わせて再生成する。`server/*`の無条件許可は避ける。
+3. `codegraph status --json --strict`でDB状態を確認し、対象rootでCLI照会する。MCPを使うなら、ホストの実際のツール名とDB参照先を確認して必要なツールだけ許可する。`server/*`の無条件許可は避ける。
 4. Codexは親セッション側でMCPと権限を設定する。子TOMLで分離できると仮定しない。
-5. 索引commit、dirty状態、build条件を記録する。間接参照や推定辺は原資料で確認する。
+5. DBの実体、対象root、解析commit、dirty状態、build条件、statusと照会結果を記録する。DB自体がGit commitや構成の一致を保証するとは仮定せず、差分と原資料で確認する。
 6. C/C++の言語サーバー設定やcompile_commands.jsonが対象構成と一致するか確認する。
 7. ツールの結果を無検証で信頼する指示が付属していても、本キットの証拠基準を弱めない。
 
