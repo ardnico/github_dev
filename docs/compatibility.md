@@ -20,11 +20,11 @@
 
 ## CodeGraph / Serena
 
-本キット自体はCodeGraphを導入・索引作成しない。source完了には対象プロジェクトのローカルSQLite DB（`.codegraph/codegraph.db`）の索引と照会が必須。MCP接続は任意の照会経路であり、CLIでもよい。仕様解析は単独実行できる。
+本キットはCLIを導入しない。source時にDBがなく対象の`.codegraph/`が未作成または空なら、解析Agentが一度だけ`codegraph init <root> --local-only`でローカルSQLite DBを作成する。source完了には索引と照会が必須。MCP接続は任意の照会経路であり、CLIでもよい。仕様解析は単独実行できる。
 利用候補は https://github.com/colbymchenry/codegraph と https://github.com/oraios/serena 。
 導入する際は承認済み版、実際の導入内容、依存、送信先、更新動作を確認する。
 
-1. 承認済み版を検証環境で導入し、対象プロジェクトで`codegraph init`（DB作成・索引）を実行する前に対象・保存先・テレメトリ設定を確認する。CodeGraphは匿名使用統計の設定を持つため、社内方針に応じて無効化する。
+1. CLIは事前に承認済み版を検証環境へ導入する。DB不在時のAgent初期化前に対象・保存先・テレメトリ設定を確認する。CodeGraphは匿名使用統計の設定を持つため、社内方針に応じて無効化する。
 2. 読み取り用だけを承認する。Serenaの編集／shell操作等を一括で許可しない。
 3. `codegraph status --json --strict`でDB状態を確認し、対象rootでCLI照会する。MCPを使うなら、ホストの実際のツール名とDB参照先を確認して必要なツールだけ許可する。`server/*`の無条件許可は避ける。
 4. Codexは親セッション側でMCPと権限を設定する。子TOMLで分離できると仮定しない。

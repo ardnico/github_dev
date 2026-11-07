@@ -70,6 +70,7 @@ class RunTests(unittest.TestCase):
         db = self.root / ".codegraph" / "codegraph.db"
         db.parent.mkdir()
         sqlite3.connect(db).close()
+        recorder.write(source / "codegraph-preparation.json", {"status":"prepared", "source_root":str(self.root.resolve())})
         self.finish(source, graph=self.draft)  # Synthetic fixture, not a real CodeGraph run.
         document = self.root / "spec.txt"
         document.write_text("requirement")

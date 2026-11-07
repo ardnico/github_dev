@@ -90,7 +90,12 @@ workflow.mdに従い入力JSONを作成してstartを実行する。
 codegraph status --json --strictを確認する。照会は対象rootでCodeGraph CLI
 （explore/query/callers/callees等）または同じDBに接続したMCPで行い、
 status、照会コマンド/質問、結果を保存して原ソースで根拠を確認する。
-DB未作成・未索引・古い索引・対象不一致ならblocked。索引更新は別途許可を得る。
+source runのstart直後、`python3 agent-kit/prepare_codegraph.py --run <source-run>`を実行する。
+DBがなければ対象rootを確認してcodegraph init <source_root> --local-onlyを一度だけ実行し、
+初期化コマンド・時刻・終了コード・出力をcodegraph-preparation.jsonへ記録する。
+その後statusと照会を再実行する。CLI自体が未導入、
+既存の非空`.codegraph/`にDBがない、初期化失敗・未索引・古い索引・対象不一致ならblocked。
+既存DBのsync・再索引やCLI導入は自動で行わず、別途許可を得る。
 driverはreporting.mdに従い、登録・関連構造体/ヘッダ・公開操作（open/close/ioctl等）・
 hard IRQ/threaded IRQ/NAPI/work・probe/remove/失敗経路・資源寿命を区別して報告する。
 存在しない操作やIRQスレッドは創作せず、登録表と原ソースで有無を示す。
@@ -166,6 +171,7 @@ python3 agent-kit/run.py start --project /absolute/project --case case001 --stag
 # 表示されたrunパスを以下へ指定。draft.txtとusage.jsonは実行結果から作成する。
 python3 agent-kit/run.py finish --run /absolute/run --report /absolute/draft.txt --status completed --usage /absolute/usage.json
 # sourceの成功時は上のfinishに --codegraph-evidence /absolute/db-query-log.txt を追加
+# sourceではstartの直後に python3 agent-kit/prepare_codegraph.py --run /absolute/run を実行
 # 保留・失敗も --status blocked または failed で理由を保存
 python3 agent-kit/run.py usage --run /absolute/run --input /absolute/later-usage.json
 ```
@@ -196,7 +202,7 @@ python3 agent-kit/run.py usage --run /absolute/run --input /absolute/later-usage
 詳細は[reporting.md](agent-kit/reporting.md)。すべての関数を同じ長さで書かず、
 公開入口、open失敗、IRQからNAPI/workerへの移行、close/removeの停止順を優先する。
 
-### CodeGraphの準備（対象環境で承認後）
+### CodeGraphの初期化（sourceでDBがない場合はAgentが実行）
 
 意図するCodeGraphは[このローカル索引型の実装](https://github.com/colbymchenry/codegraph)。
 `codegraph init`でソースを解析し、対象内の`.codegraph/codegraph.db`（SQLite）に
@@ -206,13 +212,13 @@ MCPだけを接続してもDBはできない。`codegraph install`はAgent接続
 ```sh
 codegraph version
 codegraph telemetry off              # 社内規則に応じて設定を確認
-codegraph init /absolute/project --local-only  # 許可を得た対象だけ。ローカルDBを作成しGit対象外へ
+codegraph init /absolute/project --local-only  # DB不在かつ未初期化の対象だけ。ローカルDBを作成しGit対象外へ
 codegraph status /absolute/project --json --strict
 cd /absolute/project
 codegraph explore '対象APIの入口から終了までの呼び出し経路'
 ```
 
-このコマンド例は手順であり、本キットの導入処理が実行するものではない。索引の
+解析Agentが対象root・既存データを確認してから実行する。`codegraph install`やCLI導入は自動で行わない。索引の
 commit・dirty差分・ビルド構成の適合は別途確認する。コードグラフは静的構造なので、
 ドライバのIRQやYoctoレシピの実効構成まで自動的に証明できない。
 

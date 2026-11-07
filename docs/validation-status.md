@@ -1,5 +1,12 @@
 # 検証記録
 
+## DB不在時のAgent初期化（2026-11-07）
+
+- source runで初期化ヘルパーがDB不在を確認し、未初期化ルートに限って`codegraph init <root> --local-only`を一度だけ実行。既存DBは再利用。実行結果を`codegraph-preparation.json`に記録。
+- ソース完了時に成功した準備記録を要求。CLI不在、非空の壊れた索引、初期化失敗はblocked。実際のCodeGraph CLIでの受入は未実施。
+- Pythonテスト20件PASS。CLIの実動作とCodeGraph索引の意味的な対象版一致は模擬テストの対象外。
+
+
 ## 保存先・driver報告改善（2026-11-07）
 
 - デフォルト結果を実行ホストのホーム下に分離。対象rootとの衝突防止にbasename+パスハッシュを使用。私有保存ルート0700、記録ファイル0600、`--output-root`で上書き可能。
