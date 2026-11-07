@@ -91,7 +91,10 @@ codegraph status --json --strictを確認する。照会は対象rootでCodeGrap
 （explore/query/callers/callees等）または同じDBに接続したMCPで行い、
 status、照会コマンド/質問、結果を保存して原ソースで根拠を確認する。
 DB未作成・未索引・古い索引・対象不一致ならblocked。索引更新は別途許可を得る。
-driverは登録・probe/remove・公開I/O・非同期・解放、MWは公開API・初期化終了・
+driverはreporting.mdに従い、登録・関連構造体/ヘッダ・公開操作（open/close/ioctl等）・
+hard IRQ/threaded IRQ/NAPI/work・probe/remove/失敗経路・資源寿命を区別して報告する。
+存在しない操作やIRQスレッドは創作せず、登録表と原ソースで有無を示す。
+MWは公開API・初期化終了・
 データ経路・非同期・障害復旧、yoctoはレシピ・依存・構成・タスクを優先する。
 レシピ意味論などグラフの未対応範囲は明示し、必要な展開結果を別途要求する。
 report.txtと統計を所定runへ保存する。次のステップは開始しない。
@@ -143,7 +146,10 @@ workflow.mdに従い開始・終了・結果・統計を記録してください
 
 ### 保存・記録コマンド
 
-保存先は対象プロジェクトの`local-results/<case-id>/<source|spec|compare|other>/<run-id>/`。
+デフォルト保存先は実行環境のホームにある`~/agent-analysis-results/<project-id>/<case-id>/<source|spec|compare|other>/<run-id>/`。
+`--project`は解析対象、`--output-root`は保存先の任意指定。startが表示する絶対パスを使う。
+コンテナ／リモート実行ではその環境のホームであり、手元PCのホームとは限らない。
+project-idは対象root名とパスハッシュ。保存ルートは0700、runファイルは0600。旧`local-results/`は移動・削除しない。
 UTF-8の`report.txt`、`input.json`、`start.json`、`record.json`を保存する。
 source成功時はDB状態と照会履歴を記した`codegraph.txt`も保存。再実行は新runで、上書きしない。
 途中終了はstart.jsonだけの未完了runとして残る。公開Gitには結果を追加しない。
@@ -156,6 +162,7 @@ source成功時はDB状態と照会履歴を記した`codegraph.txt`も保存。
 
 ```sh
 python3 agent-kit/run.py start --project /absolute/project --case case001 --stage other --input /absolute/input.json
+# 任意の私有保存先にしたい場合、startへ --output-root /absolute/private-results を追加
 # 表示されたrunパスを以下へ指定。draft.txtとusage.jsonは実行結果から作成する。
 python3 agent-kit/run.py finish --run /absolute/run --report /absolute/draft.txt --status completed --usage /absolute/usage.json
 # sourceの成功時は上のfinishに --codegraph-evidence /absolute/db-query-log.txt を追加
@@ -181,6 +188,13 @@ python3 agent-kit/run.py usage --run /absolute/run --input /absolute/later-usage
 遅れて判明した使用量は`usage`コマンドで版を追加する。集計時は最新の版だけを採用し、
 親の集計と子の使用量、キャッシュ／推論の内数を二重加算しない。
 この記録ツール自体はモデルやCodeGraphを起動しない。プロンプトに従うAgentがツールを実行する構成。
+
+### ドライバsourceレポートの読み方
+
+冒頭の短い全体像から、公開インタフェース・関連構造体/ヘッダ・シナリオ別の処理順、
+非同期経路・資源寿命・要確認事項へ進み、E-01形式の証拠索引で原ソースに戻れるようにする。
+詳細は[reporting.md](agent-kit/reporting.md)。すべての関数を同じ長さで書かず、
+公開入口、open失敗、IRQからNAPI/workerへの移行、close/removeの停止順を優先する。
 
 ### CodeGraphの準備（対象環境で承認後）
 
