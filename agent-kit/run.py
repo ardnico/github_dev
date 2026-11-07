@@ -158,6 +158,13 @@ def finish(run, report, status, usage, graph=None):
     if not text.strip():
         raise ValueError("Empty report")
     if record["stage"] == "source" and status == "completed":
+        preparation_path = run / "codegraph-preparation.json"
+        if not preparation_path.is_file():
+            raise ValueError("Source completion needs CodeGraph preparation record")
+        preparation = read(preparation_path)
+        if preparation.get("status") != "prepared" or preparation.get("source_root") != str(Path(inputs["source_root"]).resolve()):
+            raise ValueError("CodeGraph preparation was not successful for source_root")
+        record["codegraph_preparation_sha256"] = digest(preparation_path)
         db = Path(inputs["source_root"]).resolve() / ".codegraph" / "codegraph.db"
         if not db.is_file():
             raise ValueError("Source completion needs local CodeGraph DB")

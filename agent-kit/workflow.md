@@ -16,11 +16,12 @@
 入力: source_root、source_commit、dirty_state、build_config、scope、domain（driver/yocto/mw）、kit_revision、host_version。
 dirtyなら差分をハッシュで識別する。kernel/vendor版、MACHINE/DISTRO、生成ヘッダ等はbuild_configに記載する。
 仕様本文・仕様解析結果は読まない。関数・登録・状態・資源・エラー・終了・非同期経路を領域Skillで分析する。
-対象rootでCodeGraphを事前に導入・初期化し、`.codegraph/codegraph.db`にローカル索引を構築する。初期化には`--local-only`を使用するか`.codegraph/`をGit対象外へ設定する。導入・索引更新は明示許可を得て別のother実行として記録する。単にMCPを接続しただけでは索引は作られない。
-解析前に`codegraph version`と`codegraph status <対象root> --json --strict`等でDBの存在・状態を確認する。対象commit/dirty状態/構成と索引が合うか確認し、必要なら許可を得て`codegraph sync <対象root>`または再索引する。自動同期を盲信しない。
+source runを開始した親Agentが、対象rootを絶対パスで確定し、git commit/dirty差分・解析範囲と対象rootが一致するか確認する。その後 `python3 agent-kit/prepare_codegraph.py --run <source-run絶対パス>` を実行する。スクリプトはCLIの存在を確認し、`<source_root>/.codegraph/codegraph.db`がない場合だけ、`.codegraph/`が存在しないか空であれば`codegraph init <source_root> --local-only`を**一度だけ**実行する。本依頼はこの「DB不在時の初期化」を許可している。`--local-only`は対象のローカルGit除外設定等へ書き込む可能性があるため実行前後の差分を確認する。CLI導入や`codegraph install`、外部からの自動ダウンロードは別の許可が必要。
+既存DBがあればinitを実行しない。`.codegraph/`が空でないのにDBがない、シンボリックリンク／別の索引がある、または既存DBが破損している場合も勝手に削除・上書き・強制再索引せずblockedとする。
+初期化の有無、時刻・コマンド・終了コード・出力と版はsource runの`codegraph-preparation.json`へ保存される。スクリプトがblockedなら理由をreport.txtと統計に記録してblockedで終了する。スクリプトはDBと`status --json --strict`を確認するが、実際の照会と対象commit/dirty状態/構成の意味的整合は親Agentが確認する。既存DBの不整合・古い索引の`sync`/再索引は自動実行せず、必要性を報告して確認を求める。自動同期を盲信しない。
 照会は対象rootで`codegraph explore <質問>`、`query`、`callers`、`callees`、`impact`等のCLI、または同じローカルDBを参照するMCPを用いる。実行時の作業rootを明示し、違うDBを参照しない。
 CodeGraphの版、DB絶対パス、索引rootと版、status、実際の照会と結果を作業用テキストに残す。finishがそのテキストをrun内のcodegraph.txtへ固定する。原ソースで重要な辺を確認する。
-DBなし・未索引・古い索引・対象不一致・照会不能はblocked。ユーザーが代替を承認した場合でも通常source完了とは別扱いにする。
+初期化後もDBがない・未索引・古い索引・対象不一致・照会不能ならblocked。ユーザーが代替を承認した場合でも通常source完了とは別扱いにする。
 Yoctoの.bb/.bbappend等はCodeGraphが意味を完全解決できると仮定しない。対応範囲を明記し、BitBakeメタデータと提供済み展開結果で補う。
 結果: 対象と版、CodeGraph証拠、入口とシナリオ、資源・状態・依存、観測／推論／不明、未探索範囲。仕様との一致は判定しない。driverの詳しい表示契約は`agent-kit/reporting.md`を参照。
 
@@ -45,12 +46,12 @@ PDF/Word等の抽出で表・図・OCRが不明ならその位置を記録する
 ### other
 
 保守、相談、テスト、索引作成等も入力task、scope、kit_revision、host_versionを指定して実行を記録する。
-CodeGraphの初期化／索引更新は別の明示許可で実施し、その処理自体もotherとして記録する。
+sourceに必要な**DB不在時の初回初期化**はsource run内で記録する。CLI導入、既存DBの同期／再索引、他の用途の索引作成は別の明示許可とother記録を要する。
 
 ## 共通実行方法
 
 開始直前に `python3 agent-kit/run.py start --project <対象root> --case <案件ID> --stage <source|spec|compare|other> --input <入力JSON> [--output-root <私有の保存root>]` を実行。
-出力されたrunディレクトリ内で作業する。最終報告をdraft.txtとして保存し、終了時にfinishへ渡す。
+出力されたrunディレクトリ内で作業する。sourceでは`python3 agent-kit/prepare_codegraph.py --run <run-dir>`を先に一度実行する。最終報告をdraft.txtとして保存し、終了時にfinishへ渡す。
 `python3 agent-kit/run.py finish --run <run-dir> --report <draft.txt> --status completed --usage <usage.json>`
 失敗／保留もfailed/blockedでfinishし、理由をレポートへ保存する。途中で落ちたrunを完了扱いにしない。
 source成功時のみ `--codegraph-evidence <ローカルDBのstatus・照会履歴を含むテキスト>` も渡す。これは証拠ファイルの存在を検査するだけでDBや照会の真正性を自動保証しない。
