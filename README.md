@@ -82,37 +82,29 @@ analysis-managerとしてsourceステップだけを実行してください。
 source_root: <絶対パス> / source_commit: <SHA>
 dirty_state: <clean、または差分とそのSHA-256>
 build_config: <kernel/vendor版・設定、またはMACHINE/DISTRO等>
-domain: <driver|yocto|mw> / scope: <対象と除外範囲。driver/MWはresolved_filesに索引root相対パスの配列>
+domain: <driver|yocto|mw> / scope: <対象と除外範囲>
 kit_revision: <キットSHA> / host_version: <製品名と版>
-CodeGraph: <管理者が導入した@colbymchenry/codegraph 1.6.2の実行ファイル絶対パス、索引root・対象版・構成>
+CodeGraph: <@colbymchenry/codegraphの導入版と実行ファイル、.codegraph/codegraph.dbの絶対パス、索引root・対象版・構成>
 workflow.mdに従い入力JSONを作成してstartを実行する。
 仕様書と仕様解析結果は読まない。対象プロジェクトのローカルDBの存在と
-codegraph status <root> --jsonを準備処理で確認する。照会は対象rootでCodeGraph CLI
+codegraph status --json --strictを確認する。照会は対象rootでCodeGraph CLI
 （explore/query/callers/callees等）または同じDBに接続したMCPで行い、
 status、照会コマンド/質問、結果を保存して原ソースで根拠を確認する。
-source runのstart直後、`python3 agent-kit/prepare_codegraph.py --run <source-run> --codegraph-bin <導入済みCLI絶対パス>`を実行する。
-既存の別実装の`.codegraph/`は触らず、`CODEGRAPH_DIR=.codegraph-colbymchenry`の
-分離DBがない場合のみ一度初期化する。すべての照会でも同じCLIと環境変数を使用する。
-初期化コマンド・時刻・終了コード・出力、索引の検証結果をcodegraph-preparation.jsonへ記録する。
-CLI未導入、分離索引の異常、対象ファイルのハッシュ不一致・古い索引・対象不一致ならblocked。
+source runのstart直後、`python3 agent-kit/prepare_codegraph.py --run <source-run>`を実行する。
+同名の別CLIがPATHにある場合、承認済みの対象実装を`--codegraph-bin /absolute/path/to/codegraph`で指定する。
+DBがなければ対象rootを確認してcodegraph init <source_root> --local-onlyを一度だけ実行し、
+初期化コマンド・時刻・終了コード・出力をcodegraph-preparation.jsonへ記録する。
+その後statusと照会を再実行する。CLI自体が未導入、
+既存の非空`.codegraph/`にDBがない、初期化失敗・未索引・古い索引・対象不一致ならblocked。
 既存DBのsync・再索引やCLI導入は自動で行わず、別途許可を得る。
 driverはreporting.mdに従い、登録・関連構造体/ヘッダ・公開操作（open/close/ioctl等）・
 hard IRQ/threaded IRQ/NAPI/work・probe/remove/失敗経路・資源寿命を区別して報告する。
-冒頭に「特徴候補」とデバイスID/revision/CONFIG別分岐を置く。他ドライバとの比較が
-未実施なら「独自」と断定しない。比較する場合は同じ役割の比較元・版・構成と差分を示す。
-probe→公開、open→TX→IRQ/NAPI、RX IRQ→NAPI、close/removeを
-独立したシーケンス図にし、矢印ごとに実装行と実行文脈を付ける。
-原ソースで追えない分岐・実機の振る舞いは描かない。
 存在しない操作やIRQスレッドは創作せず、登録表と原ソースで有無を示す。
 MWは公開API・初期化終了・
 データ経路・非同期・障害復旧、yoctoはレシピ・依存・構成・タスクを優先する。
 レシピ意味論などグラフの未対応範囲は明示し、必要な展開結果を別途要求する。
-report.txtと統計を所定runへ保存し、その後visuals.jsonを元にreport.htmlを
-オフライン生成する。作業draftと生ログの複製はrunの配布対象にしない。
-次のステップは開始しない。
+report.txtと統計を所定runへ保存する。次のステップは開始しない。
 ```
-
-例: LAN743xの場合、`source_root`は`/absolute/linux/drivers/net/ethernet/microchip`という実在ディレクトリ、`scope.resolved_files`は`["lan743x_main.c", "lan743x_main.h", "lan743x_ptp.c", "lan743x_ptp.h", "lan743x_ethtool.c", "lan743x_ethtool.h"]`。`lan743x_*`のglobを`source_root`には書かない。カーネル全体の依存関係はこの索引範囲外として明記する。
 
 ### 2. 仕様書解析のプロンプト
 
@@ -177,16 +169,12 @@ source成功時はDB状態と照会履歴を記した`codegraph.txt`も保存。
 ```sh
 python3 agent-kit/run.py start --project /absolute/project --case case001 --stage other --input /absolute/input.json
 # 任意の私有保存先にしたい場合、startへ --output-root /absolute/private-results を追加
-# 表示されたrunパスを以下へ指定。draft.txt、usage.json、visuals-input.jsonはrun外に作る。
+# 表示されたrunパスを以下へ指定。draft.txtとusage.jsonは実行結果から作成する。
 python3 agent-kit/run.py finish --run /absolute/run --report /absolute/draft.txt --status completed --usage /absolute/usage.json
 # sourceの成功時は上のfinishに --codegraph-evidence /absolute/db-query-log.txt を追加
-# sourceではstartの直後に python3 agent-kit/prepare_codegraph.py --run /absolute/run --codegraph-bin /absolute/path/to/codegraph を実行
+# sourceではstartの直後に python3 agent-kit/prepare_codegraph.py --run /absolute/run を実行
 # 保留・失敗も --status blocked または failed で理由を保存
 python3 agent-kit/run.py usage --run /absolute/run --input /absolute/later-usage.json
-# 完了したsource runに図を追加し、元レポートと別のHTMLを生成
-python3 tools/render_source_report.py --run /absolute/run --visuals /absolute/visuals-input.json
-# 既存runを変更せず、reader/evidence/executionに分け重複を整理した配布ZIPを作る
-python3 tools/export_run.py --run /absolute/run --output /absolute/new-bundle.zip
 ```
 
 ### 使用量・レートの扱い
@@ -210,60 +198,32 @@ python3 tools/export_run.py --run /absolute/run --output /absolute/new-bundle.zi
 
 ### ドライバsourceレポートの読み方
 
-冒頭の短い全体像と「特徴候補・比較状態・条件別分岐」から、公開インタフェース・関連構造体/ヘッダ・シナリオ別の処理順、
+冒頭の短い全体像から、公開インタフェース・関連構造体/ヘッダ・シナリオ別の処理順、
 非同期経路・資源寿命・要確認事項へ進み、E-01形式の証拠索引で原ソースに戻れるようにする。
 詳細は[reporting.md](agent-kit/reporting.md)。すべての関数を同じ長さで書かず、
 公開入口、open失敗、IRQからNAPI/workerへの移行、close/removeの停止順を優先する。
-別のreport.htmlは図示と条件表、原report.txtの参照用表示を持つ。外部ネットワークを使わない。
-visuals.jsonの例（実際のsource行で置き換える。比較元未確認ならuncompared）。
 
-```json
-{
-  "schema_version": 1,
-  "title": "対象ドライバのソース解析",
-  "provenance": "対象commitの原ソースから再構成。実機・仕様未検証。",
-  "fingerprint": [
-    {"axis": "IRQ", "observed": "IRQからNAPIへ移行", "comparison": "uncompared", "evidence": "driver.c:100-140"}
-  ],
-  "variants": [
-    {"condition": "CONFIG_X有効", "behavior": "追加機能が登録される", "evidence": "driver.c:200-220"}
-  ],
-  "sequences": [
-    {"id": "receive", "title": "受信", "participants": [
-      {"id": "hw", "label": "デバイス", "context": "hardware"},
-      {"id": "irq", "label": "IRQ", "context": "hard IRQ"},
-      {"id": "napi", "label": "NAPI", "context": "softirq"}
-    ], "messages": [
-      {"from": "hw", "to": "irq", "kind": "async", "label": "割り込み", "evidence": "driver.c:100"},
-      {"from": "irq", "to": "napi", "kind": "async", "label": "schedule", "evidence": "driver.c:120"}
-    ]}
-  ]
-}
-```
-
-### CodeGraphの分離初期化（sourceでDBがない場合はAgentが実行）
+### CodeGraphの初期化（sourceでDBがない場合はAgentが実行）
 
 意図するCodeGraphは[このローカル索引型の実装](https://github.com/colbymchenry/codegraph)。
 `@lzehrung/codegraph`等にも同名CLIがあり、バージョン3.1.3の`schemaVersion`/`manifestPath`形式は**別実装**。
-`initialized: false`はそちらのmanifest未作成を指し、別実装のDBの有無を判定していない。
-既存の`.codegraph/`は残す。管理者が事前導入した対象CLI 1.6.2の絶対パスを指定し、
-`CODEGRAPH_DIR=.codegraph-colbymchenry`で索引を分離する。
-`codegraph init`でソースを解析し、対象内の`.codegraph-colbymchenry/codegraph.db`（SQLite）に
+`initialized: false`はそちらのmanifest未作成を指し、`.codegraph/codegraph.db`の有無を判定していない。
+別実装の`init`/`sync`を既存の`.codegraph/`へ実行しない。まず`type -a codegraph`と
+`readlink -f "$(command -v codegraph)"`等で実行ファイルを特定し、対象実装のCLIを選び直す。
+`codegraph init`でソースを解析し、対象内の`.codegraph/codegraph.db`（SQLite）に
 シンボル・呼び出し・依存関係を記録する。AgentはDBをCLIまたはローカルMCP経由で照会する。
 MCPだけを接続してもDBはできない。`codegraph install`はAgent接続の設定であり、索引作成とは別。
 
 ```sh
-CODEGRAPH_DIR=.codegraph-colbymchenry CODEGRAPH_TELEMETRY=0 /absolute/path/to/codegraph version
-python3 agent-kit/prepare_codegraph.py --run /absolute/run --codegraph-bin /absolute/path/to/codegraph
-# preparedを確認後、同じCLI・環境変数・索引rootで照会する
-CODEGRAPH_DIR=.codegraph-colbymchenry CODEGRAPH_TELEMETRY=0 /absolute/path/to/codegraph status /absolute/project --json
-CODEGRAPH_DIR=.codegraph-colbymchenry CODEGRAPH_TELEMETRY=0 /absolute/path/to/codegraph explore --path /absolute/project '対象APIの入口から終了までの呼び出し経路'
+codegraph version
+codegraph telemetry off              # 社内規則に応じて設定を確認
+codegraph init /absolute/project --local-only  # DB不在かつ未初期化の対象だけ。ローカルDBを作成しGit対象外へ
+codegraph status /absolute/project --json --strict
+cd /absolute/project
+codegraph explore '対象APIの入口から終了までの呼び出し経路'
 ```
 
-1.6.2に`status --strict`と`init --local-only`はない。現行の上流資料に記載があっても、実行版で利用できると決めつけない。
-初回初期化は`init <root> --yes`で、分離ディレクトリ内の`.gitignore`等が生成され得る。
-索引の生成物をGitへ追加しない。Git除外設定の変更は手動で判断する。
-解析Agentが対象root・分離索引を確認してから実行する。`codegraph install`やCLI導入は自動で行わない。索引の
+解析Agentが対象root・既存データを確認してから実行する。`codegraph install`やCLI導入は自動で行わない。索引の
 commit・dirty差分・ビルド構成の適合は別途確認する。コードグラフは静的構造なので、
 ドライバのIRQやYoctoレシピの実効構成まで自動的に証明できない。
 
