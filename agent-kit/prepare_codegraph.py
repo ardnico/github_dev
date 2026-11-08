@@ -1,18 +1,77 @@
-"""Prepare a source run's local CodeGraph index, without installing or reindexing tools."""
+"""Prepare a source run using a pinned, isolated CodeGraph 1.6.2 index."""
 import argparse
 from datetime import datetime, timezone
 import hashlib
 import json
 import os
 from pathlib import Path
-import shutil
 import sqlite3
 import subprocess
 import sys
+from urllib.parse import quote
+
+
+INDEX_DIR = ".codegraph-colbymchenry"
+VERSION = "1.6.2"
 
 
 def stamp():
     return datetime.now(timezone.utc).isoformat()
+
+
+def verify_index(db, source, files):
+    """Check selected files against the graph, not just the status summary."""
+    checked = []
+    uri = "file:" + quote(str(db)) + "?mode=ro"
+    with sqlite3.connect(uri, uri=True) as connection:
+        if connection.execute("PRAGMA integrity_check").fetchone() != ("ok",):
+            raise ValueError("CodeGraph SQLite integrity check failed")
+        for table in ("files", "nodes", "edges"):
+            if not connection.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (table,)).fetchone():
+                raise ValueError("CodeGraph DB missing table: " + table)
+        for relative in files:
+            path = source / relative
+            if not path.is_file() or path.is_symlink() or not path.resolve().is_relative_to(source):
+                raise ValueError("Invalid or missing scope file: " + relative)
+            row = connection.execute("SELECT content_hash, errors FROM files WHERE path=?", (relative,)).fetchone()
+            if row is None:
+                raise ValueError("Scope file absent from CodeGraph index: " + relative)
+            data = path.read_bytes()
+            data.decode("utf-8")
+            actual = hashlib.sha256(data).hexdigest()
+            if row[0] != actual:
+                raise ValueError("Scope file differs from CodeGraph index: " + relative)
+            if row[1] not in (None, "", "[]"):
+                raise ValueError("CodeGraph parse errors for scope file: " + relative)
+            checked.append({"path": relative, "sha256": actual})
+    return checked
+
+
+def verify_status(status, source, index_dir):
+    if not isinstance(status, dict):
+        raise ValueError("CodeGraph status is not a JSON object")
+    if status.get("initialized") is not True:
+        raise ValueError("CodeGraph index is not initialized")
+    if not isinstance(status.get("projectPath"), str) or Path(status["projectPath"]).resolve() != source:
+        raise ValueError("CodeGraph status resolved another project root")
+    if not isinstance(status.get("indexPath"), str) or Path(status["indexPath"]).resolve() != index_dir:
+        raise ValueError("CodeGraph status resolved another index directory")
+    if status.get("version") != VERSION:
+        raise ValueError("CodeGraph status version differs from pinned executable")
+    index = status.get("index")
+    if not isinstance(index, dict) or index.get("state") != "complete":
+        raise ValueError("CodeGraph index is not complete")
+    if index.get("reindexRecommended") is not False or type(index.get("pendingRefs")) is not int or index["pendingRefs"] != 0:
+        raise ValueError("CodeGraph index requires reindexing or reference resolution")
+    if index.get("builtWithVersion") != VERSION or type(index.get("currentExtractionVersion")) is not int or type(index.get("builtWithExtractionVersion")) is not int or index["builtWithExtractionVersion"] != index["currentExtractionVersion"]:
+        raise ValueError("CodeGraph index was built with a different extraction version")
+    if status.get("worktreeMismatch", "missing") is not None:
+        raise ValueError("CodeGraph index belongs to a different worktree")
+    changes = status.get("pendingChanges")
+    if not isinstance(changes, dict) or any(type(changes.get(k)) is not int or changes[k] != 0 for k in ("added", "modified", "removed")):
+        raise ValueError("CodeGraph index has pending changes")
+    if type(status.get("fileCount")) is not int or status["fileCount"] <= 0:
+        raise ValueError("CodeGraph index contains no files")
 
 
 def prepare(run, executable=None, invoke=None):
@@ -25,66 +84,77 @@ def prepare(run, executable=None, invoke=None):
         raise ValueError("Preparation already attempted; inspect its log before a new run")
     if hashlib.sha256((run / "input.json").read_bytes()).hexdigest() != start["input_sha256"]:
         raise ValueError("Source input snapshot was modified")
-    source = Path(inputs["source_root"]).resolve()
+    source_input = Path(inputs["source_root"])
+    source = source_input.resolve()
     project = Path(start["project"]).resolve()
-    if not source.is_dir() or not source.is_relative_to(project):
-        raise ValueError("source_root must be inside the recorded project")
-    db_dir = source / ".codegraph"
-    db = db_dir / "codegraph.db"
-    if db_dir.is_symlink() or db.is_symlink():
-        raise ValueError("Symlinked CodeGraph index is not supported")
-    command = executable or shutil.which("codegraph")
+    if not source_input.is_absolute() or not source.is_dir() or not source.is_relative_to(project):
+        raise ValueError("source_root must be an absolute directory inside the recorded project")
+    index_dir = source / INDEX_DIR
+    db = index_dir / "codegraph.db"
     invoke = invoke or subprocess.run
-    env = dict(os.environ, CODEGRAPH_TELEMETRY="0")
-    output = {"source_root": str(source), "db": str(db), "started_at": stamp(), "commands": []}
+    env = dict(os.environ, CODEGRAPH_TELEMETRY="0", CODEGRAPH_DIR=INDEX_DIR)
+    output = {"source_root": str(source), "index_path": str(index_dir), "db": str(db),
+              "started_at": stamp(), "commands": [], "required_cli_version": VERSION}
 
     def call(*args):
-        result = invoke([command, *args], cwd=source, env=env, text=True, capture_output=True, timeout=1800, check=False)
-        output["commands"].append({"args": list(args), "exit_code": result.returncode, "stdout": result.stdout, "stderr": result.stderr, "at": stamp()})
+        result = invoke([command, *args], cwd=source, env=env, text=True,
+                        capture_output=True, timeout=1800, check=False)
+        output["commands"].append({"args": list(args), "exit_code": result.returncode,
+                                   "stdout": result.stdout, "stderr": result.stderr, "at": stamp()})
         if result.returncode:
             raise ValueError("CodeGraph command failed: " + " ".join(args))
         return result
 
     try:
-        if not command:
-            raise ValueError("CodeGraph CLI not installed; do not auto-install")
-        call("version")
-        # Multiple unrelated packages expose the same 'codegraph' executable.
-        # The selected implementation uses codegraph.db, not manifest.json.
+        if not executable or not Path(executable).is_absolute() or not Path(executable).is_file() or not os.access(executable, os.X_OK):
+            raise ValueError("Specify an installed executable using --codegraph-bin <absolute path>; no automatic installation")
+        command = str(Path(executable).resolve())
+        output["cli_bin"] = command
+        output["codegraph_dir_env"] = INDEX_DIR
+        output["telemetry_env"] = "0"
+        if index_dir.is_symlink() or db.is_symlink():
+            raise ValueError("Symlinked CodeGraph index is not supported")
+        files = inputs.get("scope", {}).get("resolved_files") if isinstance(inputs.get("scope"), dict) else None
+        if inputs.get("domain") in ("driver", "mw") and (not isinstance(files, list) or not files):
+            raise ValueError("driver/mw source needs scope.resolved_files")
+        if files is not None and (not isinstance(files, list) or not all(isinstance(f, str) and f and not Path(f).is_absolute() and ".." not in Path(f).parts for f in files) or len(files) != len(set(files))):
+            raise ValueError("Invalid scope.resolved_files")
+        version = call("version").stdout.strip()
+        output["detected_cli_version"] = version
+        if version != VERSION:
+            raise ValueError("Unsupported CodeGraph CLI version: " + version + "; expected " + VERSION)
         probe = call("status", str(source), "--json")
         try:
             identity = json.loads(probe.stdout)
         except json.JSONDecodeError as error:
-            raise ValueError("Unrecognized CodeGraph status JSON; check executable/package identity") from error
+            raise ValueError("Unrecognized CodeGraph status JSON") from error
+        if not isinstance(identity, dict):
+            raise ValueError("Unrecognized CodeGraph status object")
         if "manifestPath" in identity or "schemaVersion" in identity:
-            raise ValueError("Wrong codegraph CLI (@lzehrung/codegraph format). Expected @colbymchenry/codegraph; select its executable with --codegraph-bin. Existing data was not modified")
+            raise ValueError("Wrong codegraph CLI (@lzehrung/codegraph format); existing data was not modified")
         if not all(key in identity for key in ("initialized", "projectPath", "indexPath")):
-            raise ValueError("Unrecognized CodeGraph provider; expected @colbymchenry/codegraph status format")
-        if Path(identity["projectPath"]).resolve() != source:
-            raise ValueError("CodeGraph status resolved another project root; do not reuse this index")
+            raise ValueError("Unrecognized CodeGraph provider")
+        if not isinstance(identity["projectPath"], str) or not isinstance(identity["indexPath"], str) or Path(identity["projectPath"]).resolve() != source or Path(identity["indexPath"]).resolve() != index_dir:
+            raise ValueError("CodeGraph status resolved another project or index directory")
         if not db.is_file():
-            if db_dir.exists() and (not db_dir.is_dir() or any(db_dir.iterdir())):
-                raise ValueError("Nonempty .codegraph without DB; inspect manually")
+            if index_dir.exists() and (not index_dir.is_dir() or any(index_dir.iterdir())):
+                raise ValueError("Nonempty isolated index without DB; inspect manually")
+            if identity["initialized"] is not False:
+                raise ValueError("CLI reports an index but the expected DB is absent")
             output["action"] = "init"
-            call("init", str(source), "--local-only")
+            call("init", str(source), "--yes")
         else:
             output["action"] = "reuse"
             if identity["initialized"] is not True:
-                raise ValueError("CodeGraph DB exists but selected CLI does not recognize it; do not reinitialize or delete")
+                raise ValueError("Isolated CodeGraph DB exists but selected CLI does not recognize it")
         if not db.is_file():
-            raise ValueError("CodeGraph DB absent after init")
-        with sqlite3.connect(db.as_uri() + "?mode=ro", uri=True) as connection:
-            connection.execute("SELECT name FROM sqlite_master LIMIT 1").fetchone()
-        strict = call("status", str(source), "--json", "--strict")
-        try:
-            checked = json.loads(strict.stdout)
-        except json.JSONDecodeError as error:
-            raise ValueError("CodeGraph strict status is not JSON") from error
-        if checked.get("initialized") is not True or Path(checked.get("projectPath", "")).resolve() != source:
-            raise ValueError("CodeGraph index is not initialized for the selected source root")
+            raise ValueError("Isolated CodeGraph DB absent after init")
+        checked = json.loads(call("status", str(source), "--json").stdout)
+        verify_status(checked, source, index_dir)
+        output["verified_files"] = verify_index(db, source, files or [])
         output["status"] = "prepared"
         return output
-    except (ValueError, sqlite3.DatabaseError, subprocess.TimeoutExpired, OSError) as error:
+    except (ValueError, UnicodeError, sqlite3.DatabaseError, subprocess.TimeoutExpired, OSError) as error:
         output.update(status="blocked", error=str(error))
         return output
     finally:
@@ -98,7 +168,7 @@ def prepare(run, executable=None, invoke=None):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--run", required=True)
-    parser.add_argument("--codegraph-bin", help="Explicit executable from @colbymchenry/codegraph; no installation performed")
+    parser.add_argument("--codegraph-bin", help="Preinstalled @colbymchenry/codegraph 1.6.2 executable, absolute path")
     args = parser.parse_args()
     try:
         output = prepare(args.run, executable=args.codegraph_bin)

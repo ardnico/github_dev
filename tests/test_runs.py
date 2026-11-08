@@ -1,4 +1,5 @@
 import importlib.util
+import hashlib
 from pathlib import Path
 import tempfile
 import sqlite3
@@ -28,7 +29,7 @@ class RunTests(unittest.TestCase):
         return recorder.start(self.root, "test-case", stage, inputs, self.root / "private-results")
 
     def source(self):
-        return self.start("source", source_root=str(self.root), source_commit="test", dirty_state="clean", build_config="test", domain="driver")
+        return self.start("source", source_root=str(self.root), source_commit="test", dirty_state="clean", build_config="test", domain="driver", scope={"resolved_files": ["driver.c"]})
 
     def finish(self, run, status="completed", graph=None):
         return recorder.finish(run, self.draft, status, UNKNOWN, graph)
@@ -66,11 +67,17 @@ class RunTests(unittest.TestCase):
         self.finish(run, "blocked")
 
     def test_compare_dependencies_and_tampering(self):
+        file = self.root / "driver.c"
+        file.write_text("int driver(void) { return 0; }\n")
         source = self.source()
-        db = self.root / ".codegraph" / "codegraph.db"
+        index = self.root / ".codegraph-colbymchenry"
+        db = index / "codegraph.db"
         db.parent.mkdir()
-        sqlite3.connect(db).close()
-        recorder.write(source / "codegraph-preparation.json", {"status":"prepared", "source_root":str(self.root.resolve())})
+        with sqlite3.connect(db) as connection:
+            connection.execute("CREATE TABLE files (path TEXT, content_hash TEXT, errors TEXT)")
+            connection.execute("INSERT INTO files VALUES (?, ?, NULL)", ("driver.c", hashlib.sha256(file.read_bytes()).hexdigest()))
+        recorder.write(source / "codegraph-preparation.json", {"status":"prepared", "source_root":str(self.root.resolve()),
+                      "index_path": str(index), "db": str(db), "verified_files": [{"path": "driver.c", "sha256": recorder.digest(file)}]})
         self.finish(source, graph=self.draft)  # Synthetic fixture, not a real CodeGraph run.
         document = self.root / "spec.txt"
         document.write_text("requirement")
@@ -82,6 +89,22 @@ class RunTests(unittest.TestCase):
             self.finish(compare)
         with self.assertRaisesRegex(ValueError, "modified"):
             self.start("compare", source_run=str(source), spec_run=str(spec_run), domain="driver")
+
+    def test_source_change_after_preparation_rejected(self):
+        file = self.root / "driver.c"
+        file.write_text("initial")
+        run = self.source()
+        index = self.root / ".codegraph-colbymchenry"
+        db = index / "codegraph.db"
+        index.mkdir()
+        with sqlite3.connect(db) as connection:
+            connection.execute("CREATE TABLE files (path TEXT, content_hash TEXT, errors TEXT)")
+            connection.execute("INSERT INTO files VALUES (?, ?, NULL)", ("driver.c", recorder.digest(file)))
+        recorder.write(run / "codegraph-preparation.json", {"status":"prepared", "source_root":str(self.root),
+                       "index_path": str(index), "db": str(db), "verified_files": [{"path":"driver.c", "sha256":recorder.digest(file)}]})
+        file.write_text("changed")
+        with self.assertRaisesRegex(ValueError, "changed after"):
+            self.finish(run, graph=self.draft)
 
     def test_incomplete_dependency_rejected(self):
         source = self.source()
