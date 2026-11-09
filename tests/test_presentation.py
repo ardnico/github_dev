@@ -4,6 +4,9 @@ from pathlib import Path
 import tempfile
 import unittest
 import zipfile
+import os
+import stat
+from unittest.mock import patch
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -85,6 +88,21 @@ class PresentationTests(unittest.TestCase):
             self.assertEqual(manifest["aliases"]["codegraph-evidence.txt"], "evidence/codegraph.txt")
             self.assertEqual(manifest["source_paths"]["reader/report.html"], "report.html")
             self.assertIn("draft.txt", manifest["omitted_work_files"])
+
+    def test_export_is_private_during_write_and_removes_partial_file(self):
+        target = self.base / "partial.zip"
+        original = os.umask(0o022)
+        try:
+            def fail_after_open(stream, *args, **kwargs):
+                self.assertEqual(stat.S_IMODE(target.stat().st_mode), 0o600)
+                raise RuntimeError("simulated archive failure")
+
+            with patch.object(exporter.zipfile, "ZipFile", side_effect=fail_after_open):
+                with self.assertRaisesRegex(RuntimeError, "simulated archive failure"):
+                    exporter.export(self.run, target)
+        finally:
+            os.umask(original)
+        self.assertFalse(target.exists())
 
 
 if __name__ == "__main__":

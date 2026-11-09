@@ -54,6 +54,11 @@ class KitTests(unittest.TestCase):
             target = Path(folder)
             self.assertEqual((target / "AGENTS.md").read_bytes(), (ROOT / "AGENTS.md").read_bytes())
             self.assertTrue((target / ".codex/agents/evidence-reviewer.toml").exists())
+            for name in ("render_source_report.py", "export_run.py"):
+                script = target / "tools" / name
+                self.assertEqual(script.read_bytes(), (ROOT / "tools" / name).read_bytes())
+                subprocess.run([sys.executable, str(script), "--help"],
+                               check=True, capture_output=True, text=True)
             self.assertEqual(module("install").plan(target), [])
 
 
