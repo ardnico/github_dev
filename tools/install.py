@@ -4,7 +4,8 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 DIRECTORIES = ("agent-kit", ".agents/skills", ".github/agents", ".github/skills", ".codex/agents")
-SINGLES = ("AGENTS.md", ".github/copilot-instructions.md")
+SINGLES = ("AGENTS.md", ".github/copilot-instructions.md",
+           "tools/render_source_report.py", "tools/export_run.py")
 
 
 def plan(target):

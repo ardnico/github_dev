@@ -4,7 +4,6 @@ import hashlib
 import json
 import os
 from pathlib import Path
-import stat
 import zipfile
 
 
@@ -55,11 +54,16 @@ def export(run, output):
                 "source_paths": {name: p.relative_to(run).as_posix() for p, name in included},
                 "aliases": aliases, "omitted_work_files": dropped,
                 "note": "reader=閲覧資料、evidence=索引と照会の原資料、execution=入力・統計。原レポート中のファイル名はsource_paths/aliasesで読み替える。"}
-    with zipfile.ZipFile(output, "x", compression=zipfile.ZIP_DEFLATED) as archive:
-        for path, archive_path in included:
-            archive.write(path, archive_path)
-        archive.writestr("bundle-manifest.json", json.dumps(manifest, ensure_ascii=False, indent=2) + "\n")
-    os.chmod(output, stat.S_IRUSR | stat.S_IWUSR)
+    fd = os.open(output, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    try:
+        with os.fdopen(fd, "wb") as stream:
+            with zipfile.ZipFile(stream, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+                for path, archive_path in included:
+                    archive.write(path, archive_path)
+                archive.writestr("bundle-manifest.json", json.dumps(manifest, ensure_ascii=False, indent=2) + "\n")
+    except BaseException:
+        output.unlink(missing_ok=True)
+        raise
     return output
 
 
