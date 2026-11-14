@@ -107,6 +107,19 @@ def build(run, data):
         raise ValueError("HTML presentation requires a completed source run")
     if digest(run / "report.txt") != record["report_sha256"] or digest(run / "input.json") != record["input_sha256"]:
         raise ValueError("run inputs or report changed after completion")
+    perspectives = record.get("perspectives_sha256", {})
+    if not isinstance(perspectives, dict):
+        raise ValueError("invalid perspective manifest")
+    for relative, expected in perspectives.items():
+        path = Path(relative)
+        if not path.parts or path.is_absolute() or ".." in path.parts or path.parts[0] != "perspectives":
+            raise ValueError("invalid perspective path")
+        target = run / path
+        if (target.is_symlink()
+                or any(parent.is_symlink() for parent in target.parents if parent != run)
+                or not target.is_file()
+                or digest(target) != expected):
+            raise ValueError("perspective document changed after completion")
     validate(data)
     fingerprint = table(["観点", "対象で観測したこと", "比較状態", "根拠"], [
         (r["axis"], r["observed"], r["comparison"] + (f'：{r["baseline"]}' if r.get("baseline") else ""), r["evidence"])
@@ -117,6 +130,24 @@ def build(run, data):
         steps = "".join('<li><span class="kind">' + escape(m["kind"]) + "</span> " + escape(m["label"]) + " — " + escape(m["evidence"]) + "</li>" for m in s["messages"])
         sequences.append('<section id="' + escape(s["id"]) + '"><h3>' + escape(s["title"]) + '</h3><p class="muted">' + escape(s.get("note", "")) + '</p><div class="diagram">' + sequence_svg(s) + '</div><details><summary>矢印の根拠</summary><ol>' + steps + "</ol></details></section>")
     links = " ".join('<a href="#' + escape(s["id"]) + '">' + escape(s["title"]) + "</a>" for s in data["sequences"])
+    perspective_titles = {
+        "00-overview.md": "全体像",
+        "01-registration-interfaces.md": "登録と公開インタフェース",
+        "02-data-and-state.md": "データ構造と状態",
+        "03-scenarios.md": "シナリオ別処理",
+        "04-irq-and-async.md": "IRQと非同期処理",
+        "05-resources-and-lifecycle.md": "資源とライフサイクル",
+        "06-open-questions-and-evidence.md": "要確認事項と証拠",
+    }
+    perspective_section = ""
+    if perspectives:
+        items = []
+        for relative in sorted(perspectives):
+            filename = Path(relative).name
+            label = perspective_titles.get(filename, filename)
+            items.append('<li><a href="' + escape(relative) + '">' + escape(label) + "</a></li>")
+        perspective_section = '<section id="perspectives"><h2>観点別の詳細資料</h2><ul>' + "".join(items) + "</ul></section>"
+    perspective_nav = '<a href="#perspectives">観点別資料</a>' if perspectives else ""
     css = """
     :root{color-scheme:light dark;font-family:system-ui,-apple-system,"Noto Sans JP",sans-serif;line-height:1.65;background:#f4f7f9;color:#172536}
     *{box-sizing:border-box}body{margin:0}main{max-width:1120px;margin:auto;padding:24px 24px 80px}
@@ -143,9 +174,10 @@ def build(run, data):
     return f"""<!doctype html><html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>{title}</title><style>{css}</style></head>
 <body><header><div><p class="meta">SOURCE ANALYSIS · {escape(record["run_id"])}</p><h1>{title}</h1><p>{root_note}</p></div></header>
 <main><div class="notice">「独自」は同条件の別ドライバとの比較が必要。比較状態がuncomparedの行は特徴候補であり、固有性を証明しない。</div>
-<nav><a href="#fingerprint">特徴カード</a><a href="#variants">条件別分岐</a>{links}<a href="#original">原レポート</a></nav>
+<nav><a href="#fingerprint">特徴カード</a><a href="#variants">条件別分岐</a>{links}{perspective_nav}<a href="#original">原レポート</a></nav>
 <section id="fingerprint"><h2>特徴カード</h2>{fingerprint}</section>
 <section id="variants"><h2>条件別の動作</h2>{variants}</section>
+{perspective_section}
 <section><h2>時系列で読む</h2><p class="muted">実線は通常の呼び出し、破線は戻りまたは非同期境界。番号に対応する根拠を図の下に表示する。</p>{''.join(sequences)}</section>
 <section id="original"><h2>原レポート</h2><p>下記は元のreport.txtを改変せずに表示。照会履歴・統計・索引状態はrun内の別ファイルを参照。</p><details><summary>全文を開く</summary><div class="card source">{escape(report)}</div></details></section>
 <footer class="muted">Source commit: {escape(inputs.get("source_commit", "不明"))} · HTML生成: {escape(datetime.now(timezone.utc).isoformat())}</footer>

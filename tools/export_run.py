@@ -13,7 +13,7 @@ PREFERRED = ("report.txt", "report.html", "visuals.json", "presentation.json",
 
 
 def category(relative):
-    if relative in ("report.txt", "report.html", "visuals.json", "presentation.json") or relative.startswith("reference/"):
+    if relative in ("report.txt", "report.html", "visuals.json", "presentation.json") or relative.startswith(("reference/", "perspectives/")):
         return "reader"
     if relative in ("input.json", "record.json", "usage.json", "start.json"):
         return "execution"

@@ -1,15 +1,18 @@
 # 互換性と任意ツール
 
-確認日: 2026-11-06。記載は公式資料の構成確認であり製品クライアントでの実行保証ではない。
+確認日: 2026-11-14。Codexの設定ファイル形式を公式資料と管理元の生成物で照合した。製品クライアントによる発見・実行受入は別途未実施。
 
 | 環境 | 初期対応 | 未検証事項 |
 | --- | --- | --- |
 | VS Code / Copilot harness | 親3種を表示、子2種を非表示、モデル継承 | 発見、子の実行、Fusion継承、許可ツールの実効性 |
-| Codex CLI | AGENTS.mdで親ロール指定、子TOML、Skills | 起動・モデル継承・権限制御の実機確認 |
+| Codex CLI | AGENTS.mdで親ロールを指示、`.agents/skills/`でDriver Skill、`.codex/agents/*.toml`で子Agentを定義 | 本キットの親ロール指示・子起動・モデル継承の実機確認 |
 | VS Code Local / GitHub cloud / Codex Web | 初版の保証対象外 | 同じUI・権限・設定とは仮定しない |
 
 公式資料:
 
+- [Codex customization: AGENTS.md、Skills、Subagents](https://learn.chatgpt.com/docs/customization/overview)
+- [Codex custom subagents: `.codex/agents/*.toml`形式と制約](https://learn.chatgpt.com/docs/agent-configuration/subagents)
+- [Codex local Skills: `.agents/skills/`の探索](https://learn.chatgpt.com/docs/build-skills)
 - https://code.visualstudio.com/docs/agents/reference/custom-agent-file-reference
 - https://code.visualstudio.com/docs/agent-customization/agent-skills
 - https://docs.github.com/en/copilot/concepts/models/copilot-fusion
@@ -17,6 +20,12 @@
 - https://learn.chatgpt.com/docs/agent-configuration/agents-md
 - https://learn.chatgpt.com/docs/customization/overview
 - https://docs.yoctoproject.org/ （実際には対象リリースの文書を選ぶ）
+
+## Codexでの使い方
+
+この構成はCodexで利用できる。Codexはrepoの`AGENTS.md`をプロジェクト指示として読み、`.agents/skills/`からrepo内Skillを見つける。Codex CLIでは、親Agentの役割を独立したピッカー用ファイルとしては定義せず、`AGENTS.md`の選択規則に沿って「調査・仕様照合として進めて」と依頼する。子の`evidence-researcher`と`evidence-reviewer`は`.codex/agents/*.toml`で登録する。
+
+本キットにはこれらのファイルがあるが、Codex CLIの実行画面でSkill発見・子Agent起動・権限継承まで受け入れた記録はない。子は親のsandbox・approval・MCP権限を継承する。TOML内の「編集禁止」指示だけでは読み取り専用sandboxにならない。
 
 ## CodeGraph / Serena
 

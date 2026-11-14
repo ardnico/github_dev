@@ -30,8 +30,15 @@ class RunTests(unittest.TestCase):
     def source(self):
         return self.start("source", source_root=str(self.root), source_commit="test", dirty_state="clean", build_config="test", domain="driver")
 
-    def finish(self, run, status="completed", graph=None):
-        return recorder.finish(run, self.draft, status, UNKNOWN, graph)
+    def perspective_drafts(self):
+        folder = self.root / "perspective-drafts"
+        folder.mkdir(exist_ok=True)
+        for name in recorder.PERSPECTIVE_FILES:
+            (folder / name).write_text("# " + name + "\nEvidence: E-01", encoding="utf-8")
+        return folder
+
+    def finish(self, run, status="completed", graph=None, perspectives_dir=None):
+        return recorder.finish(run, self.draft, status, UNKNOWN, graph, perspectives_dir)
 
     def test_output_and_no_overwrite(self):
         run = self.start()
@@ -46,8 +53,10 @@ class RunTests(unittest.TestCase):
 
     def test_source_evidence_required_and_blocked_allowed(self):
         run = self.source()
-        with self.assertRaisesRegex(ValueError, "CodeGraph"):
+        with self.assertRaisesRegex(ValueError, "perspective"):
             self.finish(run)
+        with self.assertRaisesRegex(ValueError, "CodeGraph"):
+            self.finish(run, perspectives_dir=self.perspective_drafts())
         self.assertEqual(self.finish(run, "blocked")["status"], "blocked")
 
     def test_input_tampering_rejected(self):
@@ -71,7 +80,10 @@ class RunTests(unittest.TestCase):
         db.parent.mkdir()
         sqlite3.connect(db).close()
         recorder.write(source / "codegraph-preparation.json", {"status":"prepared", "source_root":str(self.root.resolve())})
-        self.finish(source, graph=self.draft)  # Synthetic fixture, not a real CodeGraph run.
+        perspectives = self.perspective_drafts()
+        result = self.finish(source, graph=self.draft, perspectives_dir=perspectives)  # Synthetic fixture, not a real CodeGraph run.
+        self.assertEqual(set(result["perspectives_sha256"]), {"perspectives/" + name for name in recorder.PERSPECTIVE_FILES})
+        self.assertTrue((source / "perspectives" / recorder.PERSPECTIVE_FILES[0]).is_file())
         document = self.root / "spec.txt"
         document.write_text("requirement")
         spec_run = self.start("spec", spec_id="S", spec_revision="1", spec_files=[str(document)], domain="driver")
@@ -80,6 +92,26 @@ class RunTests(unittest.TestCase):
         (source / "report.txt").write_text("tampered")
         with self.assertRaisesRegex(ValueError, "Dependency changed"):
             self.finish(compare)
+        with self.assertRaisesRegex(ValueError, "modified"):
+            self.start("compare", source_run=str(source), spec_run=str(spec_run), domain="driver")
+
+    def test_perspective_documents_are_required_and_integrity_checked(self):
+        source = self.source()
+        db = self.root / ".codegraph" / "codegraph.db"
+        db.parent.mkdir()
+        sqlite3.connect(db).close()
+        recorder.write(source / "codegraph-preparation.json", {"status":"prepared", "source_root":str(self.root.resolve())})
+        perspectives = self.perspective_drafts()
+        (perspectives / "04-irq-and-async.md").write_text("", encoding="utf-8")
+        with self.assertRaisesRegex(ValueError, "empty"):
+            self.finish(source, graph=self.draft, perspectives_dir=perspectives)
+        (perspectives / "04-irq-and-async.md").write_text("# IRQ\nEvidence: E-02", encoding="utf-8")
+        self.finish(source, graph=self.draft, perspectives_dir=perspectives)
+        (source / "perspectives" / "04-irq-and-async.md").write_text("tampered", encoding="utf-8")
+        document = self.root / "spec.txt"
+        document.write_text("requirement")
+        spec_run = self.start("spec", spec_id="S", spec_revision="1", spec_files=[str(document)], domain="driver")
+        self.finish(spec_run)
         with self.assertRaisesRegex(ValueError, "modified"):
             self.start("compare", source_run=str(source), spec_run=str(spec_run), domain="driver")
 
