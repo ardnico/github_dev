@@ -1,11 +1,11 @@
 # 互換性と任意ツール
 
-確認日: 2026-11-14。Codexの設定ファイル形式を公式資料と管理元の生成物で照合した。製品クライアントによる発見・実行受入は別途未実施。
+確認日: 2026-11-18。記載は公式資料の構成確認であり製品クライアントでの実行保証ではない。
 
 | 環境 | 初期対応 | 未検証事項 |
 | --- | --- | --- |
-| VS Code / Copilot harness | 親3種を表示、子2種を非表示、モデル継承 | 発見、子の実行、Fusion継承、許可ツールの実効性 |
-| Codex CLI | AGENTS.mdで親ロールを指示、`.agents/skills/`でDriver Skill、`.codex/agents/*.toml`で子Agentを定義 | 本キットの親ロール指示・子起動・モデル継承の実機確認 |
+| VS Code / Copilot harness | 親3種を表示、子2種を非表示、モデル継承、解析親に`vscode/askQuestions`を設定 | 発見、子の実行、Fusion継承、質問ツールを含む許可ツールの実効性 |
+| Codex CLI | AGENTS.mdで親ロール指定、子TOML、Skills | 起動・モデル継承・権限制御の実機確認 |
 | VS Code Local / GitHub cloud / Codex Web | 初版の保証対象外 | 同じUI・権限・設定とは仮定しない |
 
 公式資料:
@@ -14,6 +14,8 @@
 - [Codex custom subagents: `.codex/agents/*.toml`形式と制約](https://learn.chatgpt.com/docs/agent-configuration/subagents)
 - [Codex local Skills: `.agents/skills/`の探索](https://learn.chatgpt.com/docs/build-skills)
 - https://code.visualstudio.com/docs/agents/reference/custom-agent-file-reference
+- https://code.visualstudio.com/docs/agents/reference/tools-reference （`#vscode/askQuestions`の表記）
+- https://code.visualstudio.com/docs/agent-customization/prompt-files （`vscode/askQuestion`の表記もあるため実環境で確認）
 - https://code.visualstudio.com/docs/agent-customization/agent-skills
 - https://docs.github.com/en/copilot/concepts/models/copilot-fusion
 - https://learn.chatgpt.com/docs/agent-configuration/subagents

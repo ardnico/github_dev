@@ -65,6 +65,15 @@ class RunTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "snapshot"):
             self.finish(run)
 
+    def test_question_answer_provenance_is_snapshotted(self):
+        provenance = {"build_config": {"origin": "user_answer", "value": "CONFIG_TEST=y"},
+                      "source_commit": {"origin": "local_inspection", "value": "test"}}
+        run = self.start("source", source_root=str(self.root), source_commit="test",
+                         dirty_state="clean", build_config="CONFIG_TEST=y", domain="driver",
+                         input_resolution=provenance)
+        self.assertEqual(recorder.read(run / "input.json")["input_resolution"], provenance)
+        self.assertEqual(self.finish(run, "blocked")["status"], "blocked")
+
     def test_spec_original_changed(self):
         document = self.root / "spec.txt"
         document.write_text("requirement")

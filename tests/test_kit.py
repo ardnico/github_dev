@@ -1,4 +1,5 @@
 import importlib.util
+import json
 from pathlib import Path
 import tempfile
 import subprocess
@@ -24,6 +25,22 @@ class KitTests(unittest.TestCase):
         self.assertEqual(first, module("render").outputs())
         for path, content in first.items():
             self.assertEqual((ROOT / path).read_text(encoding="utf-8"), content)
+
+    def test_driver_report_and_interactive_input_contract(self):
+        catalog = json.loads((ROOT / "agent-kit/catalog.json").read_text(encoding="utf-8"))
+        roles = {role["id"]: role for role in catalog["roles"]}
+        self.assertIn("vscode/askQuestions", roles["analysis-manager"]["tools"])
+        for child in ("evidence-researcher", "evidence-reviewer"):
+            self.assertNotIn("vscode/askQuestions", roles[child]["tools"])
+        workflow = (ROOT / "agent-kit/workflow.md").read_text(encoding="utf-8")
+        self.assertIn("sourceで仕様書の内容・期待値を尋ねたり読み込んだりしない", workflow)
+        self.assertIn("ツールがない、拒否された、応答が得られない場合", workflow)
+        reviewer = (ROOT / "agent-kit/roles/evidence-reviewer.md").read_text(encoding="utf-8")
+        self.assertIn("仕様照合Skillはcompareステップだけで読む", reviewer)
+        report = (ROOT / "agent-kit/reporting.md").read_text(encoding="utf-8")
+        for requirement in ("機能マトリクス", "方向別インタフェース台帳", "サブシステム経由",
+                            "確認した不在", "未確認", "動作検証", "ABI/内部契約"):
+            self.assertIn(requirement, report)
 
     def test_install_dry_plan(self):
         with tempfile.TemporaryDirectory() as folder:

@@ -26,6 +26,8 @@ Copilot / Codex向けの、根拠を残して育てるAgentキット。
 4. `analysis-manager`を選び、下記のステップ別プロンプトで依頼する。
 5. 子の実行時モデル、ツール、返却結果をUIで確認する。子へのFusion継承は未検証。
 
+解析親は、対象の版・構成・範囲など結果が変わる情報が不足した場合だけ、VS Codeで利用可能な`vscode/askQuestions`を使って対話的に尋ねる。すでに指定された情報は再質問しない。質問ツールの実効性は製品クライアントで要確認。Codexやツール未提供のホストでは通常の質問に切り替える。
+
 Copilot向け定義は`.github/agents/`、Skillsは`.github/skills/`。
 `agents`や`handoffs`等のLocal専用設定は生成しない。Fusionはモデル実行の仕組みであり、子の起動機構ではない。
 解析親には結果・統計の保存のためedit/executeを公開する。子は原資料を編集しない。
@@ -72,16 +74,42 @@ source → spec → compareを**独立した実行**にする。sourceとspecの
 | compare | 仕様書を使った照合依頼（必要なsource/spec runをAgentが選ぶ） | 適用版を確認し、一致・不一致・実装未発見・文書化なし・不明の対応表を記録 |
 | other | 保守・テスト・相談等のタスク | 対象、kit/host版を自動記録し、作業結果・検証・残課題を出力 |
 
-対象版が分からない場合は「不明」と残し、必要性がなければ聞き返さない。scope・domain・案件ID・kit revision・host version・CodeGraph状態も自動導出し、文書や依存レポートのハッシュは記録ツールが固定する。
+共通で案件ID、キットcommit、実行ホスト名・版を明示する。文書ハッシュと依存レポートのハッシュは記録ツールが固定する。
+不足値は依頼文やローカルのGit/設定から確認し、結果が変わる曖昧さだけ親Agentが質問する。必須値を決められなければrun開始前に止める。任意資料の欠落は未確認として続け、回答・自動取得・仮定の出所を入力JSONに残す。sourceで仕様の期待値は聞かない。
 
 ### ドライバ解析の依頼形式
 
 ```text
-analysis-managerとしてドライバの仕組みを解析してください。
-ソース: <絶対パス。省略時はこのworkspace>
-仕様資料（任意）: <絶対パスの一覧または「なし」>
-対象版: <kernel/vendor、driver/product、board、build情報のうち分かるもの。未知は「不明」でよい>
-仕様書を使う照合も必要なら、その旨を書いてください。
+analysis-managerとしてsourceステップだけを実行してください。
+対象プロジェクト: <絶対パス> / 案件ID: <case-id>
+source_root: <絶対パス> / source_commit: <SHA>
+dirty_state: <clean、または差分とそのSHA-256>
+build_config: <kernel/vendor版・設定、またはMACHINE/DISTRO等>
+domain: <driver|yocto|mw> / scope: <対象と除外範囲>
+kit_revision: <キットSHA> / host_version: <製品名と版>
+CodeGraph: <@colbymchenry/codegraphの導入版と実行ファイル、.codegraph/codegraph.dbの絶対パス、索引root・対象版・構成>
+workflow.mdに従い入力JSONを作成してstartを実行する。
+仕様書と仕様解析結果は読まない。対象プロジェクトのローカルDBの存在と
+codegraph status --json --strictを確認する。照会は対象rootでCodeGraph CLI
+（explore/query/callers/callees等）または同じDBに接続したMCPで行い、
+status、照会コマンド/質問、結果を保存して原ソースで根拠を確認する。
+source runのstart直後、`python3 agent-kit/prepare_codegraph.py --run <source-run>`を実行する。
+同名の別CLIがPATHにある場合、承認済みの対象実装を`--codegraph-bin /absolute/path/to/codegraph`で指定する。
+DBがなければ対象rootを確認してcodegraph init <source_root> --local-onlyを一度だけ実行し、
+初期化コマンド・時刻・終了コード・出力をcodegraph-preparation.jsonへ記録する。
+その後statusと照会を再実行する。CLI自体が未導入、
+既存の非空`.codegraph/`にDBがない、初期化失敗・未索引・古い索引・対象不一致ならblocked。
+既存DBのsync・再索引やCLI導入は自動で行わず、別途許可を得る。
+driverはreporting.mdに従い、登録・関連構造体/ヘッダ・公開操作（open/close/ioctl等）・
+hard IRQ/threaded IRQ/NAPI/work・probe/remove/失敗経路・資源寿命を区別して報告する。
+種別を一つに決めつけず、機能の実装状態・到達経路・条件・根拠・動作確認を別列のマトリクスにする。
+ユーザー直接／サブシステム経由／カーネルからのcallback／ドライバからの呼出し／
+他のカーネル利用者向けのインタフェースを方向別台帳にまとめる。
+存在しない操作やIRQスレッドは創作せず、登録表と原ソースで有無を示す。
+MWは公開API・初期化終了・
+データ経路・非同期・障害復旧、yoctoはレシピ・依存・構成・タスクを優先する。
+レシピ意味論などグラフの未対応範囲は明示し、必要な展開結果を別途要求する。
+report.txtと統計を所定runへ保存する。次のステップは開始しない。
 ```
 
 ソース解析では仕様書の内容を読み込まない。照合が依頼された場合は、仕様専用runを独立して作成し、その完了結果とsource成果物だけでcompareを行う。commitや索引情報などの管理項目はAgentが調べる。
@@ -149,10 +177,11 @@ python3 agent-kit/run.py usage --run /absolute/run --input /absolute/later-usage
 
 ### ドライバsourceレポートの読み方
 
-冒頭の短い全体像から、公開インタフェース・関連構造体/ヘッダ・シナリオ別の処理順、
-非同期経路・資源寿命・要確認事項へ進む。`report.txt`は案内ページで、7つの観点別Markdown文書に詳細とMermaid図を分けて記載し、各図からE-01形式の証拠索引で原ソースへ戻れるようにする。
+冒頭の短い全体像から、機能マトリクス・方向別インタフェース台帳・関連構造体/ヘッダ・シナリオ別の処理順、
+非同期経路・資源寿命・要確認事項へ進み、E-01形式の証拠索引で原ソースに戻れるようにする。
 詳細は[reporting.md](agent-kit/reporting.md)。すべての関数を同じ長さで書かず、
 公開入口、open失敗、IRQからNAPI/workerへの移行、close/removeの停止順を優先する。
+`確認した不在`と`未確認`を区別し、実装の確認を実機の動作確認と混同しない。
 
 ### CodeGraphの初期化（sourceでDBがない場合はAgentが実行）
 
