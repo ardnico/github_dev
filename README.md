@@ -31,11 +31,11 @@ Copilot / Codex向けの、根拠を残して育てるAgentキット。
 Copilot向け定義は`.github/agents/`、Skillsは`.github/skills/`。
 `agents`や`handoffs`等のLocal専用設定は生成しない。Fusionはモデル実行の仕組みであり、子の起動機構ではない。
 解析親には結果・統計の保存のためedit/executeを公開する。子は原資料を編集しない。
-ツール許可はパス制限ではない。原資料はread-only、local-resultsだけ書き込み可能な環境を推奨する。
+ツール許可はパス制限ではない。実際のホスト権限で原資料を読み取り専用にし、私有の結果保存先とsource初回のCodeGraph索引作成先だけを必要な範囲で書き込み可能にする。
 
 ## Codex CLIで使う
 
-1. 対象プロジェクトのルートでCodexを起動する。原資料の変更は禁止し、local-resultsへの保存だけ許可する。
+1. 対象プロジェクトのルートでCodexを起動する。解析結果は実行環境の`~/agent-analysis-results/`へ保存する。sourceは原資料を変更しないが、workflowに記載したCodeGraphの初回ローカル索引作成は`.codegraph/`等へ書き込む場合がある。
 2. 次のいずれかを依頼する（本キットのAGENTS.mdが親ロールへ案内する）。
    - `調査・仕様照合として、この範囲を調べて。変更しないで。`
    - `Agent保守として、このキットの問題を診断して。まず修正案まで。`
@@ -65,19 +65,19 @@ python3 tools/install.py --target /absolute/path/to/target-project --apply
 source → spec → compareを**独立した実行**にする。sourceとspecの順序は入れ替え可能。
 別セッション、または入力を限定した子に分離し、前段の結論を次段に混入させない。
 各依頼で`agent-kit/workflow.md`を読み、開始記録→解析→結果保存→終了記録を行う。
-以下の`<...>`は実値へ置換する。原資料を書き換える依頼ではない。
+通常の依頼では利用者が細かい管理項目を埋める必要はない。ソース、使う仕様書（任意）、分かる範囲の対象版だけを指定する。原資料を書き換える依頼ではない。
 
-| ステップ | 入力・版情報 | 出力の内容 |
+| ステップ | 利用者が指定する情報 | Agentが調べて記録する情報／成果物 |
 | --- | --- | --- |
-| source | ソース絶対パス、commit、dirty差分ハッシュ、ビルド構成、範囲、領域、CodeGraph版・ローカルDB状態 | 実装の入口・経路・状態・資源・根拠・未探索範囲 |
-| spec | 文書絶対パス、文書ID・改訂、承認状態、適用製品版・構成、範囲 | 要求ID・節／ページ、入出力・例外・曖昧さ・欠落 |
-| compare | 完了したsource/specのrun絶対パス、適用版・構成の整合 | 一致・不一致・実装未発見・文書化なし・不明の対応表 |
-| other | 保守・テスト・相談等のタスク、対象、条件 | 作業結果・検証・残課題 |
+| source | ソースroot（省略時は現在のworkspace）、対象版情報 | commit、dirty差分SHA-256、build条件、領域・範囲、kit/host/CodeGraph情報を自動収集。driverは案内ページと7つの観点別資料を出力 |
+| spec | 仕様資料のパス、分かる範囲の対象版 | 文書ID・改訂・ハッシュ・範囲を抽出し、要求ID・節／ページ、入出力・例外・曖昧さ・欠落を記録 |
+| compare | 仕様書を使った照合依頼（必要なsource/spec runをAgentが選ぶ） | 適用版を確認し、一致・不一致・実装未発見・文書化なし・不明の対応表を記録 |
+| other | 保守・テスト・相談等のタスク | 対象、kit/host版を自動記録し、作業結果・検証・残課題を出力 |
 
 共通で案件ID、キットcommit、実行ホスト名・版を明示する。文書ハッシュと依存レポートのハッシュは記録ツールが固定する。
 不足値は依頼文やローカルのGit/設定から確認し、結果が変わる曖昧さだけ親Agentが質問する。必須値を決められなければrun開始前に止める。任意資料の欠落は未確認として続け、回答・自動取得・仮定の出所を入力JSONに残す。sourceで仕様の期待値は聞かない。
 
-### 1. ソース解析のプロンプト
+### ドライバ解析の依頼形式
 
 ```text
 analysis-managerとしてsourceステップだけを実行してください。
@@ -112,46 +112,18 @@ MWは公開API・初期化終了・
 report.txtと統計を所定runへ保存する。次のステップは開始しない。
 ```
 
-### 2. 仕様書解析のプロンプト
+ソース解析では仕様書の内容を読み込まない。照合が依頼された場合は、仕様専用runを独立して作成し、その完了結果とsource成果物だけでcompareを行う。commitや索引情報などの管理項目はAgentが調べる。
 
-```text
-analysis-managerとしてspecステップだけを実行してください。
-対象プロジェクト: <絶対パス> / 案件ID: <case-id>
-spec_id: <文書ID> / spec_revision: <改訂番号・改訂日>
-spec_files: [<原本の絶対パス>]
-承認状態・適用製品版・構成: <値。不明なら不明と明示>
-domain: <driver|yocto|mw> / scope: <対象章と除外範囲>
-kit_revision: <キットSHA> / host_version: <製品名と版>
-workflow.mdに従い入力JSONを作成してstartを実行する。
-ソースとsource解析結果は読まない。要求ID、節／ページ、前提、入力、処理、
-出力、例外、タイミングを抽出し、曖昧さ・矛盾・不足・未読の図表を区別する。
-存在しないプログラム仕様を推測で補わない。report.txtと統計を所定runへ保存する。
-次のステップは開始しない。
-```
+### 仕様書を使った照合
 
-### 3. 照合のプロンプト
-
-```text
-analysis-managerとしてcompareステップだけを実行してください。
-対象プロジェクト: <絶対パス> / 案件ID: <case-id>
-source_run: <完了source runの絶対パス>
-spec_run: <完了spec runの絶対パス>
-domain: <driver|yocto|mw> / scope: <照合範囲>
-kit_revision: <キットSHA> / host_version: <製品名と版>
-workflow.mdに従い入力JSONを作成しstartで依存runを検証する。
-対象版・構成の適合を確認し、不一致なら照合を保留する。
-両レポートを双方向で照合する。未発見と不存在、未文書化と実装不良を混同しない。
-追加の原資料解析は別source/spec runとして提案し、その場で混ぜない。
-対応表・根拠・不明・確認優先度をreport.txtへ、統計をrecord.jsonへ保存する。
-```
+source/spec/compareの分離と入力制限を保つ。spec runは仕様書だけ、source runはソースだけ、compare runは両方の完了レポートだけを使う。照合の追加依頼があれば、同じ案件IDと保存済みrunから依存関係を選び、版・構成が合わない場合は保留する。
 
 ### 4. その他の処理のプロンプト
 
 ```text
 <agent-maintainer|sherlock-emperor>としてotherステップを実行してください。
-対象プロジェクト: <絶対パス> / 案件ID: <case-id>
-task: <依頼内容と変更許可範囲> / scope: <対象と除外>
-kit_revision: <キットSHA> / host_version: <製品名と版>
+対象プロジェクト: <省略時は現在のworkspace>
+task: <依頼内容と変更許可範囲>
 workflow.mdに従い開始・終了・結果・統計を記録してください。
 許可されていない変更、インストール、外部送信はしないでください。
 ```
@@ -163,7 +135,7 @@ workflow.mdに従い開始・終了・結果・統計を記録してください
 コンテナ／リモート実行ではその環境のホームであり、手元PCのホームとは限らない。
 project-idは対象root名とパスハッシュ。保存ルートは0700、runファイルは0600。旧`local-results/`は移動・削除しない。
 UTF-8の`report.txt`、`input.json`、`start.json`、`record.json`を保存する。
-source成功時はDB状態と照会履歴を記した`codegraph.txt`も保存。再実行は新runで、上書きしない。
+source成功時はDB状態と照会履歴を記した`codegraph.txt`も保存。driver sourceでは`perspectives/`以下の7文書も保存し、record.jsonが各ハッシュを固定する。再実行は新runで、上書きしない。
 途中終了はstart.jsonだけの未完了runとして残る。公開Gitには結果を追加しない。
 
 例えばotherの入力JSONは次の形式（source/spec/compareの必須キーは上表とworkflow.md参照）。
@@ -178,6 +150,7 @@ python3 agent-kit/run.py start --project /absolute/project --case case001 --stag
 # 表示されたrunパスを以下へ指定。draft.txtとusage.jsonは実行結果から作成する。
 python3 agent-kit/run.py finish --run /absolute/run --report /absolute/draft.txt --status completed --usage /absolute/usage.json
 # sourceの成功時は上のfinishに --codegraph-evidence /absolute/db-query-log.txt を追加
+# driver sourceの成功時はさらに --perspectives-dir /absolute/perspective-drafts を追加
 # sourceではstartの直後に python3 agent-kit/prepare_codegraph.py --run /absolute/run を実行
 # 保留・失敗も --status blocked または failed で理由を保存
 python3 agent-kit/run.py usage --run /absolute/run --input /absolute/later-usage.json

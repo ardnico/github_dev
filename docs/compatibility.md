@@ -10,6 +10,9 @@
 
 公式資料:
 
+- [Codex customization: AGENTS.md、Skills、Subagents](https://learn.chatgpt.com/docs/customization/overview)
+- [Codex custom subagents: `.codex/agents/*.toml`形式と制約](https://learn.chatgpt.com/docs/agent-configuration/subagents)
+- [Codex local Skills: `.agents/skills/`の探索](https://learn.chatgpt.com/docs/build-skills)
 - https://code.visualstudio.com/docs/agents/reference/custom-agent-file-reference
 - https://code.visualstudio.com/docs/agents/reference/tools-reference （`#vscode/askQuestions`の表記）
 - https://code.visualstudio.com/docs/agent-customization/prompt-files （`vscode/askQuestion`の表記もあるため実環境で確認）
@@ -19,6 +22,12 @@
 - https://learn.chatgpt.com/docs/agent-configuration/agents-md
 - https://learn.chatgpt.com/docs/customization/overview
 - https://docs.yoctoproject.org/ （実際には対象リリースの文書を選ぶ）
+
+## Codexでの使い方
+
+この構成はCodexで利用できる。Codexはrepoの`AGENTS.md`をプロジェクト指示として読み、`.agents/skills/`からrepo内Skillを見つける。Codex CLIでは、親Agentの役割を独立したピッカー用ファイルとしては定義せず、`AGENTS.md`の選択規則に沿って「調査・仕様照合として進めて」と依頼する。子の`evidence-researcher`と`evidence-reviewer`は`.codex/agents/*.toml`で登録する。
+
+本キットにはこれらのファイルがあるが、Codex CLIの実行画面でSkill発見・子Agent起動・権限継承まで受け入れた記録はない。子は親のsandbox・approval・MCP権限を継承する。TOML内の「編集禁止」指示だけでは読み取り専用sandboxにならない。
 
 ## CodeGraph / Serena
 

@@ -17,6 +17,15 @@ REQUIRED = {
     "compare": ("source_run", "spec_run", "domain"),
     "other": ("task",),
 }
+PERSPECTIVE_FILES = (
+    "00-overview.md",
+    "01-registration-interfaces.md",
+    "02-data-and-state.md",
+    "03-scenarios.md",
+    "04-irq-and-async.md",
+    "05-resources-and-lifecycle.md",
+    "06-open-questions-and-evidence.md",
+)
 
 
 def now():
@@ -35,6 +44,56 @@ def write(path, data):
     with os.fdopen(os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), "w", encoding="utf-8") as stream:
         json.dump(data, stream, ensure_ascii=False, indent=2, allow_nan=False)
         stream.write("\n")
+
+
+def perspective_hashes(run, record):
+    expected = record.get("perspectives_sha256", {})
+    if not isinstance(expected, dict):
+        raise ValueError("Invalid perspective manifest")
+    if expected and set(expected) != {"perspectives/" + name for name in PERSPECTIVE_FILES}:
+        raise ValueError("Invalid perspective manifest")
+    for relative, sha256 in expected.items():
+        path = Path(relative)
+        if not path.parts or path.is_absolute() or ".." in path.parts or path.parts[0] != "perspectives":
+            raise ValueError("Invalid perspective path")
+        target = run / path
+        if (target.is_symlink()
+                or any(parent.is_symlink() for parent in target.parents if parent != run)
+                or not target.is_file()
+                or digest(target) != sha256):
+            raise ValueError("Perspective document was modified")
+    return expected
+
+
+def finished_run_is_intact(run, record):
+    try:
+        if digest(run / "report.txt") != record.get("report_sha256"):
+            return False
+        if digest(run / "input.json") != record.get("input_sha256"):
+            return False
+        perspective_hashes(run, record)
+    except (ValueError, OSError, TypeError):
+        return False
+    return True
+
+
+def collect_perspectives(directory, run):
+    source = Path(directory).expanduser().absolute()
+    if source.is_symlink() or not source.is_dir() or source.resolve().is_relative_to(run):
+        raise ValueError("Perspective input must be a separate, non-symlink directory")
+    entries = list(source.iterdir())
+    if any(path.is_symlink() or not path.is_file() for path in entries):
+        raise ValueError("Perspective input must contain regular files only")
+    if {path.name for path in entries} != set(PERSPECTIVE_FILES):
+        raise ValueError("Perspective input must contain the seven required Markdown documents")
+    documents = {}
+    for name in PERSPECTIVE_FILES:
+        data = (source / name).read_bytes()
+        text = data.decode("utf-8")
+        if not text.strip():
+            raise ValueError("Perspective document is empty: " + name)
+        documents["perspectives/" + name] = data
+    return documents
 
 
 def stamp(value):
@@ -113,9 +172,14 @@ def start(project, case, stage, inputs, output_root=None):
             record = read(run / "record.json")
             if record["stage"] != dependency or record["status"] != "completed" or record["case_id"] != case or record["project"] != str(project):
                 raise ValueError("Invalid dependency stage/status/case/project")
-            if digest(run / "report.txt") != record["report_sha256"] or digest(run / "input.json") != record["input_sha256"]:
+            if not finished_run_is_intact(run, record):
                 raise ValueError("Dependency was modified")
-            inputs["dependencies"][dependency] = {"run_id":record["run_id"], "report_sha256":record["report_sha256"], "input_sha256":record["input_sha256"]}
+            inputs["dependencies"][dependency] = {
+                "run_id": record["run_id"],
+                "report_sha256": record["report_sha256"],
+                "input_sha256": record["input_sha256"],
+                "perspectives_sha256": record.get("perspectives_sha256", {}),
+            }
     run_id = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ") + "-" + uuid.uuid4().hex[:12]
     base = Path(output_root).expanduser().absolute() if output_root is not None else Path.home() / "agent-analysis-results"
     project_id = re.sub(r"[^A-Za-z0-9_-]", "-", project.name)[:40] or "project"
@@ -135,7 +199,7 @@ def start(project, case, stage, inputs, output_root=None):
     return run
 
 
-def finish(run, report, status, usage, graph=None):
+def finish(run, report, status, usage, graph=None, perspectives_dir=None):
     if status not in ("completed", "blocked", "failed"):
         raise ValueError("Invalid finish status")
     run = Path(run).resolve()
@@ -151,12 +215,23 @@ def finish(run, report, status, usage, graph=None):
                 raise ValueError("Specification changed during analysis")
         for stage, dependency in inputs.get("dependencies", {}).items():
             previous = Path(inputs[stage + "_run"])
-            if digest(previous / "report.txt") != dependency["report_sha256"] or digest(previous / "input.json") != dependency["input_sha256"]:
+            previous_record = read(previous / "record.json")
+            if (not finished_run_is_intact(previous, previous_record)
+                    or previous_record.get("report_sha256") != dependency["report_sha256"]
+                    or previous_record.get("input_sha256") != dependency["input_sha256"]
+                    or previous_record.get("perspectives_sha256", {}) != dependency.get("perspectives_sha256", {})):
                 raise ValueError("Dependency changed during analysis")
     usage_check(usage)
     text = Path(report).read_text(encoding="utf-8")
     if not text.strip():
         raise ValueError("Empty report")
+    perspective_documents = None
+    if record["stage"] == "source" and status == "completed" and inputs["domain"] == "driver":
+        if perspectives_dir is None:
+            raise ValueError("Completed driver source reports need perspective documents")
+        perspective_documents = collect_perspectives(perspectives_dir, run)
+    elif perspectives_dir is not None:
+        raise ValueError("Perspective documents are only supported for completed driver source reports")
     if record["stage"] == "source" and status == "completed":
         preparation_path = run / "codegraph-preparation.json"
         if not preparation_path.is_file():
@@ -179,6 +254,15 @@ def finish(run, report, status, usage, graph=None):
         record["codegraph_evidence_sha256"] = digest(graph)
         with os.fdopen(os.open(run / "codegraph.txt", os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), "w", encoding="utf-8") as stream:
             stream.write(Path(graph).read_text(encoding="utf-8"))
+    if perspective_documents is not None:
+        target_dir = run / "perspectives"
+        target_dir.mkdir(mode=0o700)
+        record["perspectives_sha256"] = {}
+        for relative, data in perspective_documents.items():
+            target = run / relative
+            with os.fdopen(os.open(target, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), "wb") as stream:
+                stream.write(data)
+            record["perspectives_sha256"][relative] = digest(target)
     with os.fdopen(os.open(run / "report.txt", os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), "w", encoding="utf-8") as stream:
         stream.write(text)
     record.update(status=status, ended_at=now(), report_sha256=digest(run / "report.txt"), usage=usage)
@@ -202,6 +286,7 @@ def main():
     command.add_argument("--status", choices=("completed", "blocked", "failed"), required=True)
     command.add_argument("--usage", required=True)
     command.add_argument("--codegraph-evidence")
+    command.add_argument("--perspectives-dir", help="Seven Markdown viewpoints for a completed driver source run")
     command = subs.add_parser("usage")
     command.add_argument("--run", required=True)
     command.add_argument("--input", required=True)
@@ -210,7 +295,7 @@ def main():
         if args.action == "start":
             print(start(args.project, args.case, args.stage, read(args.input), args.output_root))
         elif args.action == "finish":
-            result = finish(args.run, args.report, args.status, read(args.usage), args.codegraph_evidence)
+            result = finish(args.run, args.report, args.status, read(args.usage), args.codegraph_evidence, args.perspectives_dir)
             print(result["run_id"], result["status"])
         else:
             run = Path(args.run).resolve()
