@@ -36,6 +36,7 @@ def validate(root=ROOT):
         assert "model" not in header, "Default must inherit host model"
         assert "agents" not in header, "Local-only field in Copilot adapter"
         assert ("agent" in header["tools"]) == role["parent"]
+        assert ("vscode/askQuestions" in header["tools"]) == (role_id == "analysis-manager")
         if not role["parent"]:
             assert not {"edit", "execute", "agent"}.intersection(header["tools"])
             config = tomllib.loads((root / f".codex/agents/{role_id}.toml").read_text(encoding="utf-8"))

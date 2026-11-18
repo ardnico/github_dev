@@ -1,16 +1,18 @@
 # 互換性と任意ツール
 
-確認日: 2026-11-06。記載は公式資料の構成確認であり製品クライアントでの実行保証ではない。
+確認日: 2026-11-18。記載は公式資料の構成確認であり製品クライアントでの実行保証ではない。
 
 | 環境 | 初期対応 | 未検証事項 |
 | --- | --- | --- |
-| VS Code / Copilot harness | 親3種を表示、子2種を非表示、モデル継承 | 発見、子の実行、Fusion継承、許可ツールの実効性 |
+| VS Code / Copilot harness | 親3種を表示、子2種を非表示、モデル継承、解析親に`vscode/askQuestions`を設定 | 発見、子の実行、Fusion継承、質問ツールを含む許可ツールの実効性 |
 | Codex CLI | AGENTS.mdで親ロール指定、子TOML、Skills | 起動・モデル継承・権限制御の実機確認 |
 | VS Code Local / GitHub cloud / Codex Web | 初版の保証対象外 | 同じUI・権限・設定とは仮定しない |
 
 公式資料:
 
 - https://code.visualstudio.com/docs/agents/reference/custom-agent-file-reference
+- https://code.visualstudio.com/docs/agents/reference/tools-reference （`#vscode/askQuestions`の表記）
+- https://code.visualstudio.com/docs/agent-customization/prompt-files （`vscode/askQuestion`の表記もあるため実環境で確認）
 - https://code.visualstudio.com/docs/agent-customization/agent-skills
 - https://docs.github.com/en/copilot/concepts/models/copilot-fusion
 - https://learn.chatgpt.com/docs/agent-configuration/subagents
