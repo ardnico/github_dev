@@ -8,6 +8,7 @@ import os
 from pathlib import Path
 import re
 import sqlite3
+import subprocess
 import uuid
 from urllib.parse import quote
 
@@ -24,7 +25,8 @@ def now():
 
 
 def digest(path):
-    return hashlib.sha256(Path(path).read_bytes()).hexdigest()
+    with Path(path).open("rb") as stream:
+        return hashlib.file_digest(stream, "sha256").hexdigest()
 
 
 def read(path):
@@ -87,6 +89,142 @@ def usage_check(data):
     return data
 
 
+def source_file(root, relative):
+    path = Path(relative)
+    if (not path.parts or path.is_absolute() or ".." in path.parts
+            or {".git", ".codegraph"}.intersection(path.parts)):
+        raise ValueError("Invalid source-relative path: " + relative)
+    target = root / path
+    if any(p.is_symlink() for p in (target, *target.parents) if p.is_relative_to(root)) or not target.is_file():
+        raise ValueError("Source evidence must be an existing regular file without symlinks: " + relative)
+    return target
+
+
+def git(root, *args):
+    return subprocess.run(["git", "-C", str(root), *args], stdin=subprocess.DEVNULL,
+                          stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, timeout=30,
+                          env={**os.environ, "GIT_NO_LAZY_FETCH": "1", "GIT_TERMINAL_PROMPT": "0"})
+
+
+def source_snapshot(inputs, selected):
+    root = Path(inputs["source_root"])
+    if not root.is_absolute() or not root.is_dir():
+        raise ValueError("Investigation needs an existing absolute source_root")
+    root = root.resolve()
+    paths = selected.get("files")
+    if not isinstance(paths, list) or not paths or not all(isinstance(p, str) for p in paths):
+        raise ValueError("investigation.files must list the relevant source-relative files")
+    preserve = selected.get("preserve_files", False)
+    if not isinstance(preserve, bool):
+        raise ValueError("preserve_files must be a boolean")
+    commit = str(inputs["source_commit"])
+    repo = None
+    if re.fullmatch(r"(?:[0-9a-f]{40}|[0-9a-f]{64})", commit):
+        base = git(root, "rev-parse", "--show-toplevel")
+        if base.returncode == 0:
+            repo = Path(os.fsdecode(base.stdout.rstrip(b"\n")))
+    files, copies = {}, {}
+    for relative in paths:
+        target = source_file(root, relative)
+        relative = target.relative_to(root).as_posix()
+        if relative in files:
+            raise ValueError("Duplicate investigation file: " + relative)
+        current = digest(target)
+        entry = files[relative] = {"sha256": current, "recovery": "unavailable"}
+        if repo is not None:
+            spec = f"{commit}:{target.relative_to(repo).as_posix()}"
+            blob = git(repo, "cat-file", "blob", spec)
+            if blob.returncode == 0 and hashlib.sha256(blob.stdout).hexdigest() == current:
+                entry.update(recovery="git", git_path=target.relative_to(repo).as_posix())
+        if entry["recovery"] == "unavailable" and preserve:
+            data = target.read_bytes()
+            if hashlib.sha256(data).hexdigest() != current:
+                raise ValueError("Source changed during capture: " + relative)
+            entry.update(recovery="private-copy", path="evidence/source/" + current)
+            copies[current] = data
+    return {"schema_version": 1, "source_root": str(root), "git_root": str(repo) if repo else None,
+            "commit": commit, "dirty_state": inputs["dirty_state"], "build_config": inputs["build_config"],
+            "scope": inputs["scope"], "domain": inputs["domain"], "files": files}, copies
+
+
+def prior_source(project, path, snapshot):
+    path = Path(path)
+    if not path.is_absolute():
+        raise ValueError("Prior source run needs an absolute path")
+    path = path.resolve()
+    record = read(path / "record.json")
+    if record.get("stage") != "source" or record.get("status") != "completed" or record.get("project") != str(project):
+        raise ValueError("Prior run must be a completed source run for this project")
+    artifacts = {"input.json": record["input_sha256"], "report.txt": record["report_sha256"]}
+    for name, field in (("source-manifest.json", "source_manifest_sha256"),
+                        ("facts/paths.json", "source_facts_sha256"),
+                        ("yocto-evidence.json", "yocto_evidence_sha256")):
+        if record.get(field):
+            artifacts[name] = record[field]
+    for name, expected in artifacts.items():
+        if digest(source_file(path, name)) != expected:
+            raise ValueError("Prior source artifact was modified: " + name)
+    old = read(path / "source-manifest.json") if "source-manifest.json" in artifacts else {}
+    old_files = old.get("files", {})
+    same = all(old.get(key) == snapshot.get(key) for key in (
+        "source_root", "commit", "dirty_state", "build_config", "scope", "domain", "yocto_image_sha256"))
+    same = same and {k: v["sha256"] for k, v in old_files.items()} == {k: v["sha256"] for k, v in snapshot["files"].items()}
+    def incomplete(value):
+        if isinstance(value, dict):
+            return not value or any(incomplete(v) for v in value.values())
+        if isinstance(value, list):
+            return not value or any(incomplete(v) for v in value)
+        return value is None or str(value).strip().lower() in ("", "unknown", "未確認", "不明")
+
+    unknown_config = not isinstance(snapshot["build_config"], dict) or incomplete(snapshot["build_config"])
+    reuse = "hypothesis-only"
+    if old_files and "facts/paths.json" in artifacts:
+        old_recoverable = all(entry["recovery"] != "unavailable" for entry in old_files.values())
+        if same and not unknown_config:
+            reuse = "same-inputs"
+        elif old_recoverable:
+            # References are candidates until the named objects are recovered and verified.
+            reuse = "comparison-only"
+    return {"path": str(path), "run_id": record["run_id"], "reuse": reuse, "sha256": artifacts}
+
+
+def check_source_facts(data, snapshot, mode):
+    if data.get("schema_version") != 1 or not isinstance(data.get("paths"), list) or not data["paths"]:
+        raise ValueError("Source facts need schema_version=1 and paths")
+    ids = set()
+    for item in data["paths"]:
+        for key in ("id", "title", "trigger", "context", "state", "resources", "failure", "stop", "observation"):
+            if not isinstance(item.get(key), str) or not item[key].strip():
+                raise ValueError("Source path needs " + key)
+        if not re.fullmatch(r"[a-z0-9-]+", item["id"]) or item["id"] in ids:
+            raise ValueError("Invalid or duplicate source path ID")
+        ids.add(item["id"])
+        if item.get("certainty") not in ("source-confirmed", "configuration-dependent", "runtime-observed", "unverified"):
+            raise ValueError("Invalid source path certainty")
+        if item["certainty"] == "runtime-observed" and not item.get("runtime_evidence"):
+            raise ValueError("Runtime observation needs evidence")
+        if not isinstance(item.get("steps"), list) or not item["steps"]:
+            raise ValueError("Source path needs ordered steps")
+        for step in item["steps"]:
+            if not all(isinstance(step.get(k), str) and step[k].strip() for k in ("from", "to", "label")):
+                raise ValueError("Source step needs from/to/label")
+            if step.get("kind") not in ("call", "return", "async") or len(step["label"]) > 100:
+                raise ValueError("Source step needs valid kind and a concise label")
+            ref = step.get("evidence", {})
+            lines = (ref.get("start"), ref.get("end"))
+            if (ref.get("file") not in snapshot["files"] or any(type(n) is not int for n in lines)
+                    or not 1 <= lines[0] <= lines[1]):
+                raise ValueError("Source step needs a captured file and valid line range")
+    hypotheses = data.get("hypotheses", [])
+    if not isinstance(hypotheses, list) or (mode == "incident" and not hypotheses):
+        raise ValueError("Incident facts need hypotheses")
+    for item in hypotheses:
+        if item.get("path_id") not in ids or not all(
+                isinstance(item.get(k), str) and item[k].strip() for k in ("candidate", "support", "falsifier", "next_observation")):
+            raise ValueError("Hypothesis needs path_id, candidate, support, falsifier and next_observation")
+    return data
+
+
 def start(project, case, stage, inputs, output_root=None):
     if not re.fullmatch(r"[A-Za-z0-9_-]{1,80}", case):
         raise ValueError("Invalid case ID")
@@ -97,6 +235,33 @@ def start(project, case, stage, inputs, output_root=None):
         if key not in inputs or inputs[key] in (None, "", [], {}):
             raise ValueError("Missing input: " + key)
     inputs = json.loads(json.dumps(inputs))
+    snapshot = None
+    yocto_evidence = None
+    if "investigation" in inputs:
+        selected = inputs["investigation"]
+        if stage != "source" or not isinstance(selected, dict) or selected.get("mode") not in ("understand", "incident"):
+            raise ValueError("Investigation is source-only and needs mode understand or incident")
+        if "yocto_evidence" in selected:
+            path = Path(selected["yocto_evidence"])
+            if not path.is_absolute():
+                raise ValueError("Yocto evidence needs an absolute evidence file path")
+            yocto_evidence = read(path)
+            if (yocto_evidence.get("schema_version") != 1 or not yocto_evidence.get("status")
+                    or not yocto_evidence.get("image", {}).get("sha256")):
+                raise ValueError("Expected output of yocto_evidence.py")
+        snapshot, copies = source_snapshot(inputs, selected)
+        if yocto_evidence is not None:
+            for relative, evidence in yocto_evidence.get("candidate_sources", {}).items():
+                if snapshot["files"].get(relative, {}).get("sha256") != evidence["sha256"]:
+                    raise ValueError("Yocto candidate source not captured or changed: " + relative)
+            snapshot["yocto_image_sha256"] = yocto_evidence["image"]["sha256"]
+        paths = selected.get("prior_runs", [])
+        if not isinstance(paths, list) or not all(isinstance(path, str) for path in paths):
+            raise ValueError("prior_runs must list absolute source run paths")
+        priors = [prior_source(project, path, snapshot) for path in paths]
+        if len({entry["run_id"] for entry in priors}) != len(priors):
+            raise ValueError("Duplicate prior source run")
+        selected["prior_dependencies"] = priors
     if stage == "spec":
         if not isinstance(inputs["spec_files"], list):
             raise ValueError("spec_files must be a list")
@@ -131,11 +296,24 @@ def start(project, case, stage, inputs, output_root=None):
     run.mkdir(mode=0o700)
     write(run / "input.json", inputs)
     # start.json remains immutable; record.json is written only on finish.
-    write(run / "start.json", {"schema_version":1, "run_id":run_id, "case_id":case, "project":str(project), "output_root":str(base), "stage":stage, "status":"running", "started_at":now(), "input_sha256":digest(run / "input.json")})
+    record = {"schema_version":1, "run_id":run_id, "case_id":case, "project":str(project), "output_root":str(base), "stage":stage, "status":"running", "started_at":now(), "input_sha256":digest(run / "input.json")}
+    if snapshot is not None:
+        write(run / "source-manifest.json", snapshot)
+        record["source_manifest_sha256"] = digest(run / "source-manifest.json")
+        if yocto_evidence is not None:
+            write(run / "yocto-evidence.json", yocto_evidence)
+            record["yocto_evidence_sha256"] = digest(run / "yocto-evidence.json")
+        if copies:
+            (run / "evidence").mkdir(mode=0o700)
+            (run / "evidence/source").mkdir(mode=0o700)
+        for sha, data in copies.items():
+            with os.fdopen(os.open(run / "evidence/source" / sha, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), "wb") as stream:
+                stream.write(data)
+    write(run / "start.json", record)
     return run
 
 
-def finish(run, report, status, usage, graph=None):
+def finish(run, report, status, usage, graph=None, source_facts=None):
     if status not in ("completed", "blocked", "failed"):
         raise ValueError("Invalid finish status")
     run = Path(run).resolve()
@@ -145,6 +323,31 @@ def finish(run, report, status, usage, graph=None):
     if digest(run / "input.json") != record["input_sha256"]:
         raise ValueError("Input snapshot was modified")
     inputs = read(run / "input.json")
+    facts = None
+    investigation = inputs.get("investigation")
+    if source_facts is not None and (not investigation or status != "completed"):
+        raise ValueError("--source-facts requires a completed investigation")
+    if investigation and status == "completed":
+        manifest = source_file(run, "source-manifest.json")
+        if digest(manifest) != record["source_manifest_sha256"]:
+            raise ValueError("Source manifest was modified")
+        snapshot = read(manifest)
+        if record.get("yocto_evidence_sha256") and digest(source_file(run, "yocto-evidence.json")) != record["yocto_evidence_sha256"]:
+            raise ValueError("Yocto evidence was modified")
+        for path, entry in snapshot["files"].items():
+            if digest(source_file(Path(snapshot["source_root"]), path)) != entry["sha256"]:
+                raise ValueError("Source changed during analysis: " + path)
+            if entry["recovery"] == "private-copy" and digest(source_file(run, entry["path"])) != entry["sha256"]:
+                raise ValueError("Private source copy changed: " + path)
+        for dependency in investigation["prior_dependencies"]:
+            for name, expected in dependency["sha256"].items():
+                if digest(source_file(Path(dependency["path"]), name)) != expected:
+                    raise ValueError("Prior source artifact changed during analysis: " + name)
+        if source_facts is None:
+            raise ValueError("Investigation completion needs --source-facts")
+        facts = check_source_facts(read(source_facts), snapshot, investigation["mode"])
+        if (run / "facts").exists() or (run / "facts").is_symlink():
+            raise ValueError("Reserved facts directory already exists")
     if status == "completed":
         for path, expected in inputs.get("spec_hashes", {}).items():
             if digest(path) != expected:
@@ -179,12 +382,42 @@ def finish(run, report, status, usage, graph=None):
         record["codegraph_evidence_sha256"] = digest(graph)
         with os.fdopen(os.open(run / "codegraph.txt", os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), "w", encoding="utf-8") as stream:
             stream.write(Path(graph).read_text(encoding="utf-8"))
+    if facts is not None:
+        (run / "facts").mkdir(mode=0o700)
+        write(run / "facts/paths.json", facts)
+        record["source_facts_sha256"] = digest(run / "facts/paths.json")
     with os.fdopen(os.open(run / "report.txt", os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), "w", encoding="utf-8") as stream:
         stream.write(text)
     record.update(status=status, ended_at=now(), report_sha256=digest(run / "report.txt"), usage=usage)
     record["elapsed_seconds"] = (stamp(record["ended_at"]) - stamp(record["started_at"])).total_seconds()
     write(run / "record.json", record)
     return record
+
+
+def recover_source(run, relative, git_root=None):
+    run = Path(run).resolve()
+    record = read(run / "record.json")
+    if record.get("stage") != "source" or record.get("status") != "completed":
+        raise ValueError("Source recovery requires a completed source run")
+    manifest = source_file(run, "source-manifest.json")
+    if digest(manifest) != record.get("source_manifest_sha256"):
+        raise ValueError("Source manifest is not pinned by the run")
+    data = read(manifest)
+    entry = data["files"].get(relative)
+    if not entry:
+        raise ValueError("File is outside the recorded source scope")
+    if entry["recovery"] == "git":
+        blob = git(git_root or data["git_root"], "cat-file", "blob", data["commit"] + ":" + entry["git_path"])
+        if blob.returncode != 0:
+            raise ValueError("Git object unavailable; supply a checkout containing the recorded commit")
+        content = blob.stdout
+    elif entry["recovery"] == "private-copy":
+        content = source_file(run, entry["path"]).read_bytes()
+    else:
+        raise ValueError("Original source was not preserved")
+    if hashlib.sha256(content).hexdigest() != entry["sha256"]:
+        raise ValueError("Recovered source hash does not match the run")
+    return content
 
 
 def main():
@@ -202,6 +435,11 @@ def main():
     command.add_argument("--status", choices=("completed", "blocked", "failed"), required=True)
     command.add_argument("--usage", required=True)
     command.add_argument("--codegraph-evidence")
+    command.add_argument("--source-facts")
+    command = subs.add_parser("source-file", help="Write verified original source to stdout")
+    command.add_argument("--run", required=True)
+    command.add_argument("--file", required=True)
+    command.add_argument("--git-root")
     command = subs.add_parser("usage")
     command.add_argument("--run", required=True)
     command.add_argument("--input", required=True)
@@ -210,8 +448,11 @@ def main():
         if args.action == "start":
             print(start(args.project, args.case, args.stage, read(args.input), args.output_root))
         elif args.action == "finish":
-            result = finish(args.run, args.report, args.status, read(args.usage), args.codegraph_evidence)
+            result = finish(args.run, args.report, args.status, read(args.usage), args.codegraph_evidence, args.source_facts)
             print(result["run_id"], result["status"])
+        elif args.action == "source-file":
+            import sys
+            sys.stdout.buffer.write(recover_source(args.run, args.file, args.git_root))
         else:
             run = Path(args.run).resolve()
             record = read(run / "record.json")
@@ -219,7 +460,7 @@ def main():
             revision = run / ("usage-" + datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ") + "-" + uuid.uuid4().hex[:8] + ".json")
             write(revision, {"run_id":record["run_id"], "recorded_at":now(), "usage":data})
             print(revision)
-    except (ValueError, OSError, KeyError, TypeError) as error:
+    except (ValueError, OSError, KeyError, TypeError, AttributeError, subprocess.SubprocessError) as error:
         parser.error(str(error))
 
 

@@ -21,7 +21,7 @@ def validate(root=ROOT):
     ids = [role["id"] for role in roles]
     assert len(ids) == len(set(ids)), "Duplicate role ID"
     assert sum(role["parent"] for role in roles) == 3
-    assert len(roles) == 5
+    assert len(roles) == 6
     for role in roles:
         role_id = role["id"]
         assert re.fullmatch(r"[a-z0-9-]+", role_id)

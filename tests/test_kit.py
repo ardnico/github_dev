@@ -18,7 +18,7 @@ def module(name):
 
 class KitTests(unittest.TestCase):
     def test_validate(self):
-        self.assertEqual(module("validate").validate(), 5)
+        self.assertEqual(module("validate").validate(), 6)
 
     def test_reproducible(self):
         first = module("render").outputs()
@@ -30,7 +30,7 @@ class KitTests(unittest.TestCase):
         catalog = json.loads((ROOT / "agent-kit/catalog.json").read_text(encoding="utf-8"))
         roles = {role["id"]: role for role in catalog["roles"]}
         self.assertIn("vscode/askQuestions", roles["analysis-manager"]["tools"])
-        for child in ("evidence-researcher", "evidence-reviewer"):
+        for child in ("evidence-researcher", "evidence-reviewer", "source-investigator"):
             self.assertNotIn("vscode/askQuestions", roles[child]["tools"])
         workflow = (ROOT / "agent-kit/workflow.md").read_text(encoding="utf-8")
         self.assertIn("sourceで仕様書の内容・期待値を尋ねたり読み込んだりしない", workflow)
