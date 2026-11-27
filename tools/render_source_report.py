@@ -176,11 +176,14 @@ def build(run, data):
             [(r["title"], r["trigger"] + " / " + r["certainty"], r["state"] + " / " + r["resources"],
               r["failure"] + " / " + r["stop"], r["observation"]) for r in facts["paths"]]) + "</section>"
         if facts.get("hypotheses"):
-            overview += "<section><h2>障害仮説</h2>" + table(
-                ["経路", "候補", "支持根拠", "反証条件", "次の観測"],
-                [(r["path_id"], r["candidate"], r["support"], r["falsifier"], r["next_observation"])
+            overview += "<section><h2>障害仮説</h2><p>原因判定: " + escape(
+                facts.get("incident_resolution", "未記録")) + " / 停止理由: " + escape(
+                facts.get("stop_reason", "未記録")) + "</p>" + table(
+                ["経路", "候補", "状態", "支持根拠", "反証条件", "次の観測", "判断根拠"],
+                [(r["path_id"], r["candidate"], r.get("status", "未記録"), r["support"], r["falsifier"], r["next_observation"],
+                  " / ".join(r[k] for k in ("decision_evidence", "discriminating_observation") if r.get(k)))
                  for r in facts["hypotheses"]]) + "</section>"
-        introduction = '<div class="notice">仮説は原因確定ではありません。解析入力・ソース版は source-manifest.json、図の原データは facts/paths.json に記録されています。</div>'
+        introduction = '<div class="notice">調査の完了と原因の確定は別です。判定と根拠は障害仮説欄、ソース版は source-manifest.json、図の原データは facts/paths.json を参照してください。</div>'
         nav = '<a href="#paths">経路と確認事項</a>'
     else:
         introduction = '<div class="notice">「独自」は同条件の別ドライバとの比較が必要。比較状態がuncomparedの行は特徴候補であり、固有性を証明しない。</div>'

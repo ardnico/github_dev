@@ -8,6 +8,8 @@ import subprocess
 
 from run import digest, source_file
 
+PACKAGE_NAME = r"[a-zA-Z0-9_.+][a-zA-Z0-9_.+-]*"
+
 
 def absolute(value, directory=False):
     path = Path(value)
@@ -50,23 +52,32 @@ def resolve(project, build, image, manifest, pkgdata, target, tool="oe-pkgdata-u
             if len(fields) != 3:
                 raise ValueError("Expected image manifest rows: package architecture version")
             installed.setdefault(fields[0], []).append(fields[1:])
-    candidates = set()
+    recipe_packages = set()
     for row in query("find-path", target).splitlines():
         name, sep, found = row.partition(":")
-        if sep and name.strip() in installed and found.strip() == target:
-            candidates.add(name.strip())
+        if sep and found.strip() == target and re.fullmatch(PACKAGE_NAME, name.strip()):
+            recipe_packages.add(name.strip())
+    mappings = {}
+    for name in sorted(recipe_packages):
+        names = query("lookup-pkg", name).splitlines()
+        mappings[name] = names[0].strip() if len(names) == 1 and re.fullmatch(PACKAGE_NAME, names[0].strip()) else None
+    owners = [(name, runtime) for name, runtime in mappings.items() if runtime in installed]
+    candidates = {runtime for _, runtime in owners}
     recipe, package = None, None
+    recipe_package = None
     status = "package-unresolved"
-    if len(candidates) > 1 or any(len(set(map(tuple, installed[name]))) != 1 for name in candidates):
+    if len(owners) > 1 or any(len(set(map(tuple, installed[name]))) != 1 for name in candidates):
         status = "package-ambiguous"
-    elif candidates:
-        package = next(iter(candidates))
+    elif None in mappings.values():
+        status = "package-name-unresolved"
+    elif owners:
+        recipe_package, package = owners[0]
         names = query("lookup-recipe", package).splitlines()
         # oe-pkgdata-util versions emit a recipe name or 'package: recipe'.
         if len(names) == 1:
             left, sep, right = names[0].partition(":")
             name = (right if sep and left == package else names[0]).strip()
-            if re.fullmatch(r"[a-zA-Z0-9_.+-]+", name):
+            if re.fullmatch(PACKAGE_NAME, name):
                 recipe = name
         status = "recipe-candidate" if recipe else "recipe-unresolved"
     if bool(patched_root) != bool(source_files):
@@ -83,7 +94,8 @@ def resolve(project, build, image, manifest, pkgdata, target, tool="oe-pkgdata-u
         "schema_version": 1, "status": status, "project_dir": str(project), "build_dir": str(build),
         "image": file_evidence(image), "image_manifest": file_evidence(manifest), "pkgdata_dir": str(pkgdata),
         "target": target, "rootfs_file": rootfs_file, "installed_owner_candidates": sorted(candidates),
-        "package": package, "package_versions": installed.get(package, []), "recipe": recipe,
+        "package": package, "recipe_package": recipe_package, "package_name_mappings": mappings,
+        "package_versions": installed.get(package, []), "recipe": recipe,
         "candidate_sources": sources, "kernel_config": file_evidence(absolute(kernel_config)) if kernel_config else None,
         "build_metadata": file_evidence(absolute(build_metadata)) if build_metadata else None,
         "queries": calls, "provenance": "unverified",
@@ -106,7 +118,8 @@ def resolve(project, build, image, manifest, pkgdata, target, tool="oe-pkgdata-u
                     {name: src["sha256"] for name, src in item["candidate_sources"].items()})
 
         expected = identity(previous)
-        comparable = evidence["status"] == "recipe-candidate" and bool(sources)
+        comparable = (evidence["status"] == "recipe-candidate" and bool(sources)
+                      and previous.get("recipe_package") in (None, recipe_package))
         evidence["build_capture"] = {"path": str(capture), "sha256": sha256(contents).hexdigest()}
         evidence["provenance"] = "matches-build-capture" if comparable and identity(evidence) == expected else "build-capture-mismatch"
     return evidence

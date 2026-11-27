@@ -147,6 +147,20 @@ def source_snapshot(inputs, selected):
             "scope": inputs["scope"], "domain": inputs["domain"], "files": files}, copies
 
 
+def yocto_reuse_identity(evidence):
+    """Pin semantic inputs; do not compare mutable paths or command output."""
+    fields = ("status", "target", "package", "recipe_package", "recipe",
+              "package_versions", "provenance")
+    identity = {key: evidence.get(key) for key in fields}
+    for key in ("image", "image_manifest", "rootfs_file", "kernel_config",
+                "build_metadata", "build_capture"):
+        identity[key + "_sha256"] = (evidence.get(key) or {}).get("sha256")
+    identity["candidate_source_hashes"] = {
+        path: entry["sha256"] for path, entry in evidence.get("candidate_sources", {}).items()
+    }
+    return identity
+
+
 def prior_source(project, path, snapshot):
     path = Path(path)
     if not path.is_absolute():
@@ -167,20 +181,27 @@ def prior_source(project, path, snapshot):
     old = read(path / "source-manifest.json") if "source-manifest.json" in artifacts else {}
     old_files = old.get("files", {})
     same = all(old.get(key) == snapshot.get(key) for key in (
-        "source_root", "commit", "dirty_state", "build_config", "scope", "domain", "yocto_image_sha256"))
+        "source_root", "commit", "dirty_state", "build_config", "scope", "domain",
+        "yocto_image_sha256", "yocto_identity"))
     same = same and {k: v["sha256"] for k, v in old_files.items()} == {k: v["sha256"] for k, v in snapshot["files"].items()}
     def incomplete(value):
         if isinstance(value, dict):
             return not value or any(incomplete(v) for v in value.values())
         if isinstance(value, list):
             return not value or any(incomplete(v) for v in value)
-        return value is None or str(value).strip().lower() in ("", "unknown", "未確認", "不明")
+        return value is None or str(value).strip().lower() in ("", "unknown", "none", "null", "n/a", "未確認", "不明")
 
+    unknown_version = incomplete(old.get("commit")) or incomplete(snapshot.get("commit"))
     unknown_config = not isinstance(snapshot["build_config"], dict) or incomplete(snapshot["build_config"])
+    yocto = snapshot.get("yocto_identity")
+    unresolved_yocto = yocto is not None and (
+        yocto["status"] != "recipe-candidate"
+        or any(incomplete(yocto[key]) for key in ("target", "package", "recipe_package", "recipe", "image_manifest_sha256"))
+        or yocto["provenance"] == "build-capture-mismatch")
     reuse = "hypothesis-only"
-    if old_files and "facts/paths.json" in artifacts:
+    if not unknown_version and old_files and "facts/paths.json" in artifacts:
         old_recoverable = all(entry["recovery"] != "unavailable" for entry in old_files.values())
-        if same and not unknown_config:
+        if same and not unknown_config and not unresolved_yocto:
             reuse = "same-inputs"
         elif old_recoverable:
             # References are candidates until the named objects are recovered and verified.
@@ -188,7 +209,7 @@ def prior_source(project, path, snapshot):
     return {"path": str(path), "run_id": record["run_id"], "reuse": reuse, "sha256": artifacts}
 
 
-def check_source_facts(data, snapshot, mode):
+def check_source_facts(data, snapshot, mode, runtime=None):
     if data.get("schema_version") != 1 or not isinstance(data.get("paths"), list) or not data["paths"]:
         raise ValueError("Source facts need schema_version=1 and paths")
     ids = set()
@@ -218,10 +239,29 @@ def check_source_facts(data, snapshot, mode):
     hypotheses = data.get("hypotheses", [])
     if not isinstance(hypotheses, list) or (mode == "incident" and not hypotheses):
         raise ValueError("Incident facts need hypotheses")
+    runtime = runtime or {}
     for item in hypotheses:
         if item.get("path_id") not in ids or not all(
                 isinstance(item.get(k), str) and item[k].strip() for k in ("candidate", "support", "falsifier", "next_observation")):
             raise ValueError("Hypothesis needs path_id, candidate, support, falsifier and next_observation")
+        state = item.get("status")
+        if state not in ("candidate", "supported", "refuted", "confirmed"):
+            raise ValueError("Invalid hypothesis status")
+        if state in ("refuted", "confirmed") and not all(
+                isinstance(item.get(k), str) and item[k].strip()
+                for k in ("decision_evidence", "discriminating_observation")):
+            raise ValueError("Hypothesis decision needs evidence and a discriminating observation")
+        if state == "confirmed":
+            expected = runtime.get("expected_artifact_sha256")
+            observed = runtime.get("observed_artifact_sha256")
+            if (mode != "incident" or not expected or expected != observed
+                    or item["decision_evidence"] not in runtime.get("evidence", {})):
+                raise ValueError("Confirmed cause needs matching runtime artifact and current observation evidence")
+    if mode == "incident":
+        if data.get("stop_reason") not in ("decision", "evidence-exhausted", "budget-limit"):
+            raise ValueError("Incident facts need a stop reason")
+        data["incident_resolution"] = "confirmed" if any(
+            item["status"] == "confirmed" for item in hypotheses) else "not-confirmed"
     return data
 
 
@@ -241,6 +281,22 @@ def start(project, case, stage, inputs, output_root=None):
         selected = inputs["investigation"]
         if stage != "source" or not isinstance(selected, dict) or selected.get("mode") not in ("understand", "incident"):
             raise ValueError("Investigation is source-only and needs mode understand or incident")
+        if "runtime" in selected:
+            runtime = selected["runtime"]
+            if selected["mode"] != "incident" or not isinstance(runtime, dict):
+                raise ValueError("Runtime evidence requires incident mode")
+            for key in ("expected_artifact_sha256", "observed_artifact_sha256"):
+                value = runtime.get(key)
+                if value is not None and not re.fullmatch(r"[a-f0-9]{64}", value):
+                    raise ValueError("Invalid artifact SHA-256: " + key)
+            evidence = runtime.get("evidence", {})
+            if not isinstance(evidence, dict):
+                raise ValueError("Runtime evidence must map IDs to authorized absolute files")
+            for ident, filename in evidence.items():
+                artifact = Path(filename)
+                if not re.fullmatch(r"[a-z0-9-]+", ident) or not artifact.is_absolute() or not artifact.is_file():
+                    raise ValueError("Invalid runtime evidence ID or file")
+                evidence[ident] = {"path": str(artifact.resolve()), "sha256": digest(artifact)}
         if "yocto_evidence" in selected:
             path = Path(selected["yocto_evidence"])
             if not path.is_absolute():
@@ -255,6 +311,7 @@ def start(project, case, stage, inputs, output_root=None):
                 if snapshot["files"].get(relative, {}).get("sha256") != evidence["sha256"]:
                     raise ValueError("Yocto candidate source not captured or changed: " + relative)
             snapshot["yocto_image_sha256"] = yocto_evidence["image"]["sha256"]
+            snapshot["yocto_identity"] = yocto_reuse_identity(yocto_evidence)
         paths = selected.get("prior_runs", [])
         if not isinstance(paths, list) or not all(isinstance(path, str) for path in paths):
             raise ValueError("prior_runs must list absolute source run paths")
@@ -332,6 +389,10 @@ def finish(run, report, status, usage, graph=None, source_facts=None):
         if digest(manifest) != record["source_manifest_sha256"]:
             raise ValueError("Source manifest was modified")
         snapshot = read(manifest)
+        runtime = investigation.get("runtime", {})
+        for artifact in runtime.get("evidence", {}).values():
+            if digest(artifact["path"]) != artifact["sha256"]:
+                raise ValueError("Runtime evidence changed during analysis")
         if record.get("yocto_evidence_sha256") and digest(source_file(run, "yocto-evidence.json")) != record["yocto_evidence_sha256"]:
             raise ValueError("Yocto evidence was modified")
         for path, entry in snapshot["files"].items():
@@ -345,7 +406,7 @@ def finish(run, report, status, usage, graph=None, source_facts=None):
                     raise ValueError("Prior source artifact changed during analysis: " + name)
         if source_facts is None:
             raise ValueError("Investigation completion needs --source-facts")
-        facts = check_source_facts(read(source_facts), snapshot, investigation["mode"])
+        facts = check_source_facts(read(source_facts), snapshot, investigation["mode"], runtime)
         if (run / "facts").exists() or (run / "facts").is_symlink():
             raise ValueError("Reserved facts directory already exists")
     if status == "completed":
@@ -420,6 +481,36 @@ def recover_source(run, relative, git_root=None):
     return content
 
 
+def reusable_source_paths(run, prior_run_id):
+    """Return only static path facts from a verified same-inputs dependency."""
+    run = Path(run).resolve()
+    record = read(run / "start.json")
+    if record.get("stage") != "source" or digest(source_file(run, "input.json")) != record["input_sha256"]:
+        raise ValueError("Expected an intact source run")
+    investigation = read(run / "input.json").get("investigation", {})
+    dependency = next((d for d in investigation.get("prior_dependencies", [])
+                       if d["run_id"] == prior_run_id), None)
+    if dependency is None or dependency["reuse"] != "same-inputs":
+        raise ValueError("Static path reuse requires a pinned same-inputs dependency")
+    previous = Path(dependency["path"])
+    for name, expected in dependency["sha256"].items():
+        if digest(source_file(previous, name)) != expected:
+            raise ValueError("Prior source artifact changed: " + name)
+    data = read(previous / "facts/paths.json")
+    fields = ("id", "title", "trigger", "context", "state", "resources", "failure", "stop", "steps", "certainty")
+    step_fields = ("from", "to", "kind", "label")
+    paths = []
+    for item in data["paths"]:
+        if item["certainty"] not in ("source-confirmed", "configuration-dependent"):
+            continue
+        row = {key: item[key] for key in fields if key != "steps"}
+        row["steps"] = [{**{key: step[key] for key in step_fields},
+                         "evidence": {key: step["evidence"][key] for key in ("file", "start", "end")}}
+                        for step in item["steps"]]
+        paths.append(row)
+    return {"schema_version": 1, "prior_run_id": prior_run_id, "paths": paths}
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     subs = parser.add_subparsers(dest="action", required=True)
@@ -440,6 +531,9 @@ def main():
     command.add_argument("--run", required=True)
     command.add_argument("--file", required=True)
     command.add_argument("--git-root")
+    command = subs.add_parser("prior-static-paths", help="Print reusable static paths without incident conclusions")
+    command.add_argument("--run", required=True)
+    command.add_argument("--prior-run-id", required=True)
     command = subs.add_parser("usage")
     command.add_argument("--run", required=True)
     command.add_argument("--input", required=True)
@@ -453,6 +547,8 @@ def main():
         elif args.action == "source-file":
             import sys
             sys.stdout.buffer.write(recover_source(args.run, args.file, args.git_root))
+        elif args.action == "prior-static-paths":
+            print(json.dumps(reusable_source_paths(args.run, args.prior_run_id), ensure_ascii=False, indent=2))
         else:
             run = Path(args.run).resolve()
             record = read(run / "record.json")

@@ -26,6 +26,8 @@
 
 復元は `python3 agent-kit/run.py source-file --run <完了run> --file <source_root相対パス>`。
 Gitのチェックアウトを移動したら `--git-root <対象コミットを持つローカルチェックアウト>` を指定する。ハッシュが一致した原本のみ標準出力へ書く。最新版で代用しない。
+同一入力の場合は `python3 agent-kit/run.py prior-static-paths --run <今回run> --prior-run-id <過去run ID>` で静的な経路だけを取り出す。過去の観測欄・実機観測経路・仮説・原因判定は返さない。静的欄の自由記述に実機所見を混ぜない。別版の比較は原ソースを復元して行い、旧runの障害判断は今回の事実に持ち込まない。
+現行・過去のどちらかのソース版が不明なら `hypothesis-only` とする。Yoctoでは同一イメージだけでは再利用しない。対象パス、両方のパッケージ名、レシピ、版、manifest・設定・ビルド証跡等のハッシュを固定する。対象未解決、証跡の不一致、または旧形式でこの識別情報を持たない場合は `same-inputs` にしない。
 
 既存のstart・CodeGraph準備後、入口から終端までを機能マトリクスまたは公開IFから選び、正常、失敗、停止を区別する。
 ドライバ初版の比較対象は probe/巻き戻し、RX IRQ→NAPI、停止/解放。MWでは公開APIと非同期・復旧の境界を優先する。
@@ -47,8 +49,9 @@ Gitのチェックアウトを移動したら `--git-root <対象コミットを
       ]
     }
   ],
+  "stop_reason": "evidence-exhausted",
   "hypotheses": [
-    {"path_id": "rx", "candidate": "原因候補", "support": "支持根拠IDと理由",
+    {"path_id": "rx", "candidate": "原因候補", "status": "candidate", "support": "支持根拠IDと理由",
      "falsifier": "反証条件", "next_observation": "次に取る観測"}
   ]
 }
@@ -56,7 +59,10 @@ Gitのチェックアウトを移動したら `--git-root <対象コミットを
 
 値と行番号は書式例。stepは記録した原本の行を引用し、状態・資源・失敗・停止の重要な断定は本文にも根拠を付ける。
 `certainty` は `source-confirmed|configuration-dependent|runtime-observed|unverified`。runtimeには `runtime_evidence` も必須。未探索や未観測は明示する。
-incidentでは仮説を最低1件記録する。静的解析だけで原因確定しない。候補を立てられる証拠もなければblockedとする。
+incidentでは仮説を最低1件記録し、`status` を `candidate|supported|refuted|confirmed` とする。
+`stop_reason` は `decision|evidence-exhausted|budget-limit`。上限や証拠不足で止めた場合も、候補を立てられるなら原因未確定として報告を完成できる。候補を立てる証拠もなければblockedとする。
+`refuted` / `confirmed` は `decision_evidence` と `discriminating_observation` が必要。`confirmed` では `decision_evidence` に今回runの観測ファイルIDを指定する。
+任意入力 `investigation.runtime` の `expected_artifact_sha256` は解析ソースに対応する成果物のハッシュ、`observed_artifact_sha256` は今回の稼働物から別途取得したハッシュ、`evidence` は今回提供された観測IDから許可済み絶対ファイルパスへの辞書。ツールは記録上のハッシュ一致と観測ファイルの改変を検査する。両ハッシュの出所、観測の鮮度、仮説を識別できるかは人と親が根拠で確認し、静的解析や過去ログだけで確定しない。
 完了時は既存の `finish --status completed --codegraph-evidence ...` に `--source-facts <作業用JSON>` を追加する。
 `facts/paths.json` に固定した後、`python3 tools/render_source_report.py --run <run>`（`--visuals` なし）で同じ経路データから図とHTMLを生成する。
 
@@ -74,7 +80,7 @@ python3 agent-kit/yocto_evidence.py --project /abs/project --build /abs/build \
 ```
 
 対象イメージから別途抽出済みのrootfs（任意）を渡す。マウント・ビルドは実行しない。
-実行ファイルまたはモジュールのrootfsパスをパッケージからレシピ候補へ逆引きする。イメージの後処理で生成・置換されたファイル、シンボリックリンク、組み込みドライバは別途確認する。組み込みドライバは起動カーネル成果物→採用レシピ→最終 `.config`→パッチ適用後ソースを証跡から追う。ヘルパーのパッケージ逆引きでは扱わない。
+実行ファイルまたはモジュールのrootfsパスを `find-path` でレシピ側パッケージ名へ逆引きし、`lookup-pkg` でランタイム名に変換してからmanifestに照合する。変換前後の名前を記録し、曖昧な所有者や未解決の変換からレシピを確定しない。イメージの後処理で生成・置換されたファイル、シンボリックリンク、組み込みドライバは別途確認する。組み込みドライバは起動カーネル成果物→採用レシピ→最終 `.config`→パッチ適用後ソースを証跡から追う。ヘルパーのパッケージ逆引きでは扱わない。
 
 優先順は (1) ビルドとひも付けた保存済みパッチ適用後ソース、(2) 対象ビルドの解決済み `${S}` に残る作業ツリー、(3) `PREMIRRORS` 原本と当時のレイヤー・設定・パッチからの再構成。ソース候補がなくても逆引きだけ実行できる。再構成はこのAgentが自動で実行しない。採用レシピ・bbappend・レイヤー版、解決済みSRCREVまたは原本ハッシュ、実際に適用されたパッチ順、最終設定、必要な生成ヘッダはビルド側で記録する。対象を限定し、保存にはarchiverのpatchedモードなどを使う。
 
