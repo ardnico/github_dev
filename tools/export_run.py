@@ -41,6 +41,10 @@ def export(run, output):
         if relative == "draft.txt":
             dropped.append(relative)
             continue
+        if relative.startswith("evidence/source/"):
+            # Captured originals stay local; do not copy them into shareable archives.
+            dropped.append(relative)
+            continue
         sha = hashlib.sha256(path.read_bytes()).hexdigest()
         if sha in seen:
             aliases[relative] = seen[sha]

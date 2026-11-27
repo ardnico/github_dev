@@ -21,7 +21,7 @@
 - 「シャーロック皇帝」: `agent-kit/roles/sherlock-emperor.md`
 
 続いて `agent-kit/common.md` を読む。未指定時は勝手にキャラクターを演じない。
-Subagent は `evidence-researcher` と `evidence-reviewer`。委任できなければ単一Agentで進め、その旨を報告する。
+Subagent は `evidence-researcher`、`evidence-reviewer`、source深掘り専用の `source-investigator`。委任できなければ単一Agentで進め、その旨を報告する。
 
 ## このキットを変更するとき
 

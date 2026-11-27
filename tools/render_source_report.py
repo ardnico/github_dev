@@ -40,8 +40,8 @@ def validate(data):
         ids.add(sequence["id"])
         participants = sequence.get("participants")
         messages = sequence.get("messages")
-        if not isinstance(participants, list) or not 2 <= len(participants) <= 5 or not isinstance(messages, list) or not messages:
-            raise ValueError("sequence needs 2-5 participants and messages")
+        if not isinstance(participants, list) or not 1 <= len(participants) <= 5 or not isinstance(messages, list) or not messages:
+            raise ValueError("sequence needs 1-5 participants and messages")
         names = [p.get("id") for p in participants]
         if len(names) != len(set(names)) or any(not re.fullmatch(r"[a-z0-9-]+", n or "") or not p.get("label") or not p.get("context") for n, p in zip(names, participants)):
             raise ValueError("invalid sequence participant")
@@ -97,6 +97,35 @@ def table(headers, rows):
     head = "".join("<th scope=\"col\">" + escape(h) + "</th>" for h in headers)
     body = "".join("<tr>" + "".join("<td>" + escape(v) + "</td>" for v in row) + "</tr>" for row in rows)
     return '<div class="table-wrap"><table><thead><tr>' + head + '</tr></thead><tbody>' + body + '</tbody></table></div>'
+
+
+def investigator_visuals(run):
+    record = json.loads((run / "record.json").read_text(encoding="utf-8"))
+    facts_file = run / "facts/paths.json"
+    if not record.get("source_facts_sha256") or digest(facts_file) != record["source_facts_sha256"]:
+        raise ValueError("Completed run has no verified source facts")
+    facts = json.loads(facts_file.read_text(encoding="utf-8"))
+    sequences = []
+    for item in facts["paths"]:
+        groups = []
+        participants, messages = {}, []
+        for step in item["steps"]:
+            if len(participants.keys() | {step["from"], step["to"]}) > 5:
+                groups.append((participants, messages))
+                participants, messages = {}, []
+            for actor in (step["from"], step["to"]):
+                participants.setdefault(actor, f"actor-{len(participants) + 1}")
+            ref = step["evidence"]
+            messages.append({**step, "from": participants[step["from"]], "to": participants[step["to"]],
+                             "evidence": f'{ref["file"]}:{ref["start"]}-{ref["end"]}'})
+        groups.append((participants, messages))
+        for index, (actors, steps) in enumerate(groups, 1):
+            sequences.append({"id": f'path-{item["id"]}-{index}', "title": f'{item["title"]} ({index}/{len(groups)})',
+                              "note": item["context"],
+                              "participants": [{"id": ident, "label": name, "context": " "} for name, ident in actors.items()],
+                              "messages": steps})
+    return {"schema_version": 1, "title": "ソース深掘り調査", "fingerprint": [], "variants": [],
+            "sequences": sequences, "investigation_facts": facts}
 
 
 def build(run, data):
@@ -171,32 +200,53 @@ def build(run, data):
     """
     title = escape(data["title"])
     root_note = escape(data.get("provenance", "実装の静的解析。仕様・実機による確認ではない。"))
+    facts = data.get("investigation_facts")
+    if facts:
+        overview = '<section id="paths"><h2>経路と確認事項</h2>' + table(
+            ["経路", "発火条件・確度", "状態・資源", "失敗・停止", "観測点"],
+            [(r["title"], r["trigger"] + " / " + r["certainty"], r["state"] + " / " + r["resources"],
+              r["failure"] + " / " + r["stop"], r["observation"]) for r in facts["paths"]]) + "</section>"
+        if facts.get("hypotheses"):
+            overview += "<section><h2>障害仮説</h2><p>原因判定: " + escape(
+                facts.get("incident_resolution", "未記録")) + " / 停止理由: " + escape(
+                facts.get("stop_reason", "未記録")) + "</p>" + table(
+                ["経路", "候補", "状態", "支持根拠", "反証条件", "次の観測", "判断根拠"],
+                [(r["path_id"], r["candidate"], r.get("status", "未記録"), r["support"], r["falsifier"], r["next_observation"],
+                  " / ".join(r[k] for k in ("decision_evidence", "discriminating_observation") if r.get(k)))
+                 for r in facts["hypotheses"]]) + "</section>"
+        introduction = '<div class="notice">調査の完了と原因の確定は別です。判定と根拠は障害仮説欄、ソース版は source-manifest.json、図の原データは facts/paths.json を参照してください。</div>'
+        nav = '<a href="#paths">経路と確認事項</a>'
+    else:
+        introduction = '<div class="notice">「独自」は同条件の別ドライバとの比較が必要。比較状態がuncomparedの行は特徴候補であり、固有性を証明しない。</div>'
+        nav = '<a href="#fingerprint">特徴カード</a><a href="#variants">条件別分岐</a>'
+        overview = (f'<section id="fingerprint"><h2>特徴カード</h2>{fingerprint}</section>'
+                    f'<section id="variants"><h2>条件別の動作</h2>{variants}</section>')
     return f"""<!doctype html><html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>{title}</title><style>{css}</style></head>
 <body><header><div><p class="meta">SOURCE ANALYSIS · {escape(record["run_id"])}</p><h1>{title}</h1><p>{root_note}</p></div></header>
-<main><div class="notice">「独自」は同条件の別ドライバとの比較が必要。比較状態がuncomparedの行は特徴候補であり、固有性を証明しない。</div>
-<nav><a href="#fingerprint">特徴カード</a><a href="#variants">条件別分岐</a>{links}{perspective_nav}<a href="#original">原レポート</a></nav>
-<section id="fingerprint"><h2>特徴カード</h2>{fingerprint}</section>
-<section id="variants"><h2>条件別の動作</h2>{variants}</section>
-{perspective_section}
+<main>{introduction}
+<nav>{nav}{links}<a href="#original">原レポート</a></nav>
+{overview}
 <section><h2>時系列で読む</h2><p class="muted">実線は通常の呼び出し、破線は戻りまたは非同期境界。番号に対応する根拠を図の下に表示する。</p>{''.join(sequences)}</section>
 <section id="original"><h2>原レポート</h2><p>下記は元のreport.txtを改変せずに表示。照会履歴・統計・索引状態はrun内の別ファイルを参照。</p><details><summary>全文を開く</summary><div class="card source">{escape(report)}</div></details></section>
 <footer class="muted">Source commit: {escape(inputs.get("source_commit", "不明"))} · HTML生成: {escape(datetime.now(timezone.utc).isoformat())}</footer>
 </main></body></html>"""
 
 
-def render(run, visuals):
+def render(run, visuals=None):
     run = Path(run).resolve()
-    data = json.loads(Path(visuals).read_text(encoding="utf-8"))
+    source = Path(visuals) if visuals is not None else None
+    visual_text = source.read_text(encoding="utf-8") if source else json.dumps(
+        investigator_visuals(run), ensure_ascii=False, indent=2) + "\n"
+    data = json.loads(visual_text)
     output = run / "report.html"
     visual_target = run / "visuals.json"
     manifest = run / "presentation.json"
     if any(path.exists() for path in (output, visual_target, manifest)):
         raise ValueError("presentation already exists; use a new run")
     page = build(run, data)
-    source = Path(visuals)
-    if source.resolve() == visual_target.resolve():
+    if source and source.resolve() == visual_target.resolve():
         raise ValueError("visuals source must be outside the final run")
-    for path, content in ((visual_target, source.read_text(encoding="utf-8")), (output, page)):
+    for path, content in ((visual_target, visual_text), (output, page)):
         with os.fdopen(os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), "w", encoding="utf-8") as stream:
             stream.write(content)
     payload = {"schema_version": 1, "run_id": json.loads((run / "record.json").read_text(encoding="utf-8"))["run_id"],
@@ -210,7 +260,7 @@ def render(run, visuals):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--run", required=True)
-    parser.add_argument("--visuals", required=True)
+    parser.add_argument("--visuals", help="Omit to render from verified investigator facts")
     args = parser.parse_args()
     try:
         print(render(args.run, args.visuals))

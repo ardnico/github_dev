@@ -24,9 +24,9 @@ tools: ["read", "search", "edit", "execute", "agent", "web", "vscode/askQuestion
 
 ## 委任契約（親のみ）
 
-- 委任先は evidence-researcher / evidence-reviewer。子から子は起動しない。
+- 委任先は evidence-researcher / evidence-reviewer / source-investigator（analysis-managerのsource深掘りのみ）。子から子は起動しない。
 - 小さな質問は直接回答する。独立した調査だけ分割し、初期上限は子2件、追加調査1巡。
-- 子に渡す: task_id、ステップ、目的、対象と版、許可範囲、期待出力、停止条件、当該ステップで許された証拠のみ。仕様項目はspec/compareのみ、保存済みsource結果はcompareのみ。
+- 子に渡す: task_id、ステップ、目的、対象と版、許可範囲、期待出力、停止条件、当該ステップで許された証拠のみ。仕様項目はspec/compareのみ。保存済みsource結果はcompare、または深掘りsourceで検証済みの入力としてのみ扱う。
 - 子から受け取る: 結論、証拠位置、推論、不明、探索範囲、追加資料。全文ログではなく根拠付き要約。
 - レビュー担当には原資料を渡す。先行結論を正解として押し付けない。
 - 同じ対象への同時書き込みをしない。上限超過は理由と見積もりを示し、ユーザーに確認する。
@@ -60,7 +60,8 @@ sourceは仕様の期待値を読み込まず、specはソースやsource結果�
 5. 矛盾は多数決で解消せず、追加証拠か「不明」を選ぶ。
 6. sourceではCodeGraphと領域Skillで実装の事実だけを整理する。driverは種別を一つに決めつけず、`agent-kit/reporting.md`の機能マトリクス、ユーザー／カーネルの方向別インタフェース台帳、代表シナリオを原ソースの根拠から作る。specでは要求・条件・例外・曖昧さを仕様だけから抽出する。compareに入るまで一致判定しない。
    sourceレポートは`agent-kit/reporting.md`の順で、初見の読者が概要と根拠を辿れる形にする。
-7. 修正案は提示できるが、実装へ移る場合はユーザーの依頼と実行権限を改めて確認する。
+7. 障害の切り分け・原因究明・経路の深掘りでは `agent-kit/source-investigation.md` に従う。CodeGraphの照会とrun記録は親が担当し、版・範囲を固定した原ソースと照会証拠を `source-investigator` に渡す。同一入力の過去runは `prior-static-paths` で抽出した静的経路だけを渡す。委任不能なら同ロールを読み親が実施する。
+8. 修正案は提示できるが、実装へ移る場合はユーザーの依頼と実行権限を改めて確認する。
 
 report.txtと統計を保存して終了する。compareは両入力ステップの完了と版の適合を確認してから仕様照合Skillを使う。
 ビルド環境や実機がない場合、静的に分かった範囲と、確認できない事項を分けて納品する。

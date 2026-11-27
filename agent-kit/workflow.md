@@ -30,16 +30,8 @@ source runを開始した親Agentが、対象rootを絶対パスで確定し、g
 CodeGraphの版、DB絶対パス、索引rootと版、status、実際の照会と結果を作業用テキストに残す。finishがそのテキストをrun内のcodegraph.txtへ固定する。原ソースで重要な辺を確認する。
 初期化後もDBがない・未索引・古い索引・対象不一致・照会不能ならblocked。ユーザーが代替を承認した場合でも通常source完了とは別扱いにする。
 Yoctoの.bb/.bbappend等はCodeGraphが意味を完全解決できると仮定しない。対応範囲を明記し、BitBakeメタデータと提供済み展開結果で補う。
-結果: 対象と版、CodeGraph証拠、入口とシナリオ、資源・状態・依存、観測／推論／不明、未探索範囲。仕様との一致は判定しない。
-driverで完了するsource runは`report.txt`を短い索引とし、以下7資料を`perspectives/`に保存する。欠けた視点を黙って省かず、該当機能がない／未探索のどちらか、根拠とともに記す。Mermaidのシーケンス図・状態図・flowchartを用い、ノード・矢印に根拠IDを付ける。詳しい表示契約は`agent-kit/reporting.md`を参照。
-
-- `00-overview.md`: 対象・版、読み方、構成と主要経路の全体図。
-- `01-registration-interfaces.md`: 登録、ID対応、実際に公開された操作と到達経路。
-- `02-data-and-state.md`: 中心構造体・ヘッダ・所有関係・状態遷移・同期primitive。
-- `03-scenarios.md`: probe成功／失敗、公開操作、TX/RXなどの順序・分岐・戻り値。
-- `04-irq-and-async.md`: hard IRQ/threaded IRQ/NAPI/work等の実在する非同期境界、共有状態と再投入。
-- `05-resources-and-lifecycle.md`: 取得・利用・停止・同期・解放を失敗経路とremove/shutdown/PMに結ぶ。
-- `06-open-questions-and-evidence.md`: 優先度付き要確認事項、探索範囲、E-01形式の証拠索引。
+障害切り分け・経路深掘り・過去source runの再利用は、sourceステップ内の任意モードとする。`agent-kit/source-investigation.md`に従う。通常のsourceと同じCodeGraph要件を満たし、spec/compareの入力を読まない。
+結果: 対象と版、CodeGraph証拠、入口とシナリオ、資源・状態・依存、観測／推論／不明、未探索範囲。仕様との一致は判定しない。driverの詳しい表示契約は`agent-kit/reporting.md`を参照。
 
 ### spec
 

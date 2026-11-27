@@ -13,6 +13,7 @@ Copilot / Codex向けの、根拠を残して育てるAgentキット。
 | sherlock-emperor | シャーロック皇帝（汎用参謀） | する |
 | evidence-researcher | 根拠収集 | 親から委任 |
 | evidence-reviewer | 独立レビュー | 親から委任 |
+| source-investigator | 経路の深掘り・障害切り分け | analysis-managerから委任（sourceのみ） |
 
 専門手順はドライバ、OS/Yoctoレシピ、MW、仕様照合の4 Skills。
 設計／製作専用Agent、自動モデル選択、常駐監視、無制限の再委任は初版に含めない。
@@ -174,6 +175,20 @@ python3 agent-kit/run.py usage --run /absolute/run --input /absolute/later-usage
 遅れて判明した使用量は`usage`コマンドで版を追加する。集計時は最新の版だけを採用し、
 親の集計と子の使用量、キャッシュ／推論の内数を二重加算しない。
 この記録ツール自体はモデルやCodeGraphを起動しない。プロンプトに従うAgentがツールを実行する構成。
+
+### ソース深掘り・過去run再利用
+
+```text
+analysis-managerとしてsourceだけを障害調査モードで実行してください。
+対象: <プロジェクトとソースルート> / 版: <コミットまたはビルド成果物ID>
+調査範囲: <入口から停止までの経路> / 症状: <観測ログと稼働版、不明なら不明>
+比較対象: <過去の完了source runの絶対パス。なければなし>
+Yoctoの場合: <project_dir・build_dir・イメージ・rootfs内パス>
+仕様書は読まず、過去runと当時のコードを区別して検証してください。
+根拠・反証条件・次の観測点をreport.txtにまとめ、構造化データからHTMLを生成してください。
+```
+
+実行コマンドと入力JSONは [ソース深掘りの手順](agent-kit/source-investigation.md) を参照。Yoctoのプロジェクトパスは探索の入口であり、出荷ソースの同一性は証明しません。
 
 ### ドライバsourceレポートの読み方
 
