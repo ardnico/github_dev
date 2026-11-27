@@ -1,5 +1,13 @@
 # 検証記録
 
+## driverレポートの観点分割と入力簡略化（2026-11-14）
+
+- 利用者の指定をソースroot、任意の仕様資料パス、分かる範囲の対象版情報に整理。commit、差分、scope、実行環境、CodeGraph情報はAgentが調査し、欠落は不明として記録する。
+- `report.txt`を案内ページとし、driver解析を全体像、登録／公開I/F、データ／状態、シナリオ、IRQ／非同期、資源／ライフサイクル、要確認／証拠の7文書に分割。Mermaid図の重要経路をE-IDへ結び付ける。
+- source完了時に7文書を必須化し、SHA-256をrecord.jsonへ保存。compare開始・終了時とHTML生成時に資料の変更を検出し、ZIPでは閲覧資料に含める。
+- Codexの`AGENTS.md`、`.agents/skills/`、`.codex/agents/*.toml`形式を公式資料と照合。Codex実行画面でのskill発見・子起動・権限継承は未受入。
+- `python3 tools/render.py`、`python3 tools/validate.py`、`python3 -m unittest discover -s tests -v`を実行。生成12ファイルと静的検証PASS、Pythonテスト30件PASS、`git diff --check` PASS。
+
 ## 同名CodeGraph CLIの衝突対策（2026-11-08）
 
 - 実例の`3.1.3`/`schemaVersion`/`manifestPath`は`@lzehrung/codegraph`。本キットが対象とする`@colbymchenry/codegraph`とは異なる実装と確認。

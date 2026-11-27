@@ -71,6 +71,31 @@ class PresentationTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "changed"):
             renderer.render(self.run, self.visuals)
 
+    def test_perspective_links_are_verified_and_exported(self):
+        perspective = self.run / "perspectives" / "00-overview.md"
+        perspective.parent.mkdir()
+        perspective.write_text("# 全体像\n", encoding="utf-8")
+        record = json.loads((self.run / "record.json").read_text(encoding="utf-8"))
+        record["perspectives_sha256"] = {"perspectives/00-overview.md": renderer.digest(perspective)}
+        (self.run / "record.json").write_text(json.dumps(record), encoding="utf-8")
+        output = renderer.render(self.run, self.visuals)
+        self.assertIn('href="perspectives/00-overview.md"', output.read_text(encoding="utf-8"))
+        target = self.base / "bundle.zip"
+        exporter.export(self.run, target)
+        with zipfile.ZipFile(target) as bundle:
+            self.assertIn("reader/perspectives/00-overview.md", bundle.namelist())
+
+    def test_tampered_perspective_rejected(self):
+        perspective = self.run / "perspectives" / "00-overview.md"
+        perspective.parent.mkdir()
+        perspective.write_text("# 全体像\n", encoding="utf-8")
+        record = json.loads((self.run / "record.json").read_text(encoding="utf-8"))
+        record["perspectives_sha256"] = {"perspectives/00-overview.md": renderer.digest(perspective)}
+        (self.run / "record.json").write_text(json.dumps(record), encoding="utf-8")
+        perspective.write_text("changed", encoding="utf-8")
+        with self.assertRaisesRegex(ValueError, "perspective document changed"):
+            renderer.render(self.run, self.visuals)
+
     def test_export_deduplicates_and_preserves_alias(self):
         renderer.render(self.run, self.visuals)
         (self.run / "draft.txt").write_bytes((self.run / "report.txt").read_bytes())

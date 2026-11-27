@@ -136,6 +136,19 @@ def build(run, data):
         raise ValueError("HTML presentation requires a completed source run")
     if digest(run / "report.txt") != record["report_sha256"] or digest(run / "input.json") != record["input_sha256"]:
         raise ValueError("run inputs or report changed after completion")
+    perspectives = record.get("perspectives_sha256", {})
+    if not isinstance(perspectives, dict):
+        raise ValueError("invalid perspective manifest")
+    for relative, expected in perspectives.items():
+        path = Path(relative)
+        if not path.parts or path.is_absolute() or ".." in path.parts or path.parts[0] != "perspectives":
+            raise ValueError("invalid perspective path")
+        target = run / path
+        if (target.is_symlink()
+                or any(parent.is_symlink() for parent in target.parents if parent != run)
+                or not target.is_file()
+                or digest(target) != expected):
+            raise ValueError("perspective document changed after completion")
     validate(data)
     fingerprint = table(["観点", "対象で観測したこと", "比較状態", "根拠"], [
         (r["axis"], r["observed"], r["comparison"] + (f'：{r["baseline"]}' if r.get("baseline") else ""), r["evidence"])
@@ -146,6 +159,24 @@ def build(run, data):
         steps = "".join('<li><span class="kind">' + escape(m["kind"]) + "</span> " + escape(m["label"]) + " — " + escape(m["evidence"]) + "</li>" for m in s["messages"])
         sequences.append('<section id="' + escape(s["id"]) + '"><h3>' + escape(s["title"]) + '</h3><p class="muted">' + escape(s.get("note", "")) + '</p><div class="diagram">' + sequence_svg(s) + '</div><details><summary>矢印の根拠</summary><ol>' + steps + "</ol></details></section>")
     links = " ".join('<a href="#' + escape(s["id"]) + '">' + escape(s["title"]) + "</a>" for s in data["sequences"])
+    perspective_titles = {
+        "00-overview.md": "全体像",
+        "01-registration-interfaces.md": "登録と公開インタフェース",
+        "02-data-and-state.md": "データ構造と状態",
+        "03-scenarios.md": "シナリオ別処理",
+        "04-irq-and-async.md": "IRQと非同期処理",
+        "05-resources-and-lifecycle.md": "資源とライフサイクル",
+        "06-open-questions-and-evidence.md": "要確認事項と証拠",
+    }
+    perspective_section = ""
+    if perspectives:
+        items = []
+        for relative in sorted(perspectives):
+            filename = Path(relative).name
+            label = perspective_titles.get(filename, filename)
+            items.append('<li><a href="' + escape(relative) + '">' + escape(label) + "</a></li>")
+        perspective_section = '<section id="perspectives"><h2>観点別の詳細資料</h2><ul>' + "".join(items) + "</ul></section>"
+    perspective_nav = '<a href="#perspectives">観点別資料</a>' if perspectives else ""
     css = """
     :root{color-scheme:light dark;font-family:system-ui,-apple-system,"Noto Sans JP",sans-serif;line-height:1.65;background:#f4f7f9;color:#172536}
     *{box-sizing:border-box}body{margin:0}main{max-width:1120px;margin:auto;padding:24px 24px 80px}
